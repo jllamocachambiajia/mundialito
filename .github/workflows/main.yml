@@ -16,10 +16,25 @@ jobs:
       with:
         python-version: '3.10'
 
+    - name: Enable i386 architecture and update
+      run: |
+        sudo dpkg --add-architecture i386
+        sudo apt-get update -y
+
     - name: Install Buildozer and dependencies prerequisites
       run: |
-        sudo apt-get update
-        sudo apt-get install -y git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses5:i386 libstdc++6:i386 libz1:i386
+        sudo apt-get install -y \
+            git \
+            zip \
+            unzip \
+            openjdk-17-jdk \
+            autoconf \
+            libtool \
+            pkg-config \
+            zlib1g-dev \
+            libncurses5:i386 \
+            libstdc++6:i386 \
+            libz1:i386
 
     - name: Install Cython and Buildozer
       run: |
