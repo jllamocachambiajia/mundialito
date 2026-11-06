@@ -3,10 +3,9 @@ title = Copa Mundial de Chapas
 package.name = mundialchapa
 package.domain = org.jose
 source.dir = .
-source.include_exts = py,png,jpg,kv
-source.exclude_dirs = .github, bin, .buildozer
+source.include_exts = py,png,jpg,kv,atlas,ttf,wav,ogg
 version = 0.1
-requirements = python3,kivy,sdl2_rtf,sdl2,sdl2_image,sdl2_mixer
+requirements = python3,kivy
 orientation = portrait
 fullscreen = 1
 
