@@ -6,46 +6,17 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
+    - name: Build with Buildozer Container
+      uses: ArtemSBulgakov/buildozer-action@v1
       with:
-        python-version: '3.10'
+        command: buildozer -v android debug
 
-    - name: Enable i386 architecture and update
-      run: |
-        sudo dpkg --add-architecture i386
-        sudo apt-get update -y
-
-    - name: Install Buildozer and dependencies prerequisites
-      run: |
-        sudo apt-get install -y \
-            git \
-            zip \
-            unzip \
-            openjdk-17-jdk \
-            autoconf \
-            libtool \
-            pkg-config \
-            zlib1g-dev \
-            libncurses5:i386 \
-            libstdc++6:i386 \
-            libz1:i386
-
-    - name: Install Cython and Buildozer
-      run: |
-        pip install --upgrade pip
-        pip install Cython==0.30.10 buildozer
-
-    - name: Build APK with Buildozer
-      run: |
-        buildozer -v android debug
-
-    - name: Upload APK Artifact
+    - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: CopaMundialChapas-APK
