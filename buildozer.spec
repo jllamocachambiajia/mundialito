@@ -6,7 +6,7 @@ source.dir = .
 source.include_exts = py,png,jpg,kv
 source.exclude_dirs = .github, bin, .buildozer
 version = 0.1
-requirements = python3,kivy
+requirements = python3,kivy,sdl2_rtf,sdl2,sdl2_image,sdl2_mixer
 orientation = portrait
 fullscreen = 1
 
