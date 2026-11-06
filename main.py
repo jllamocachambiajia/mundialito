@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-COPA MUNDIAL DE CHAPAS  v6 APK  -  Python 3 + Kivy (empaquetable como APK con Buildozer)
+COPA MUNDIAL DE CHAPAS  v9 APK  -  Python 3 + Kivy (empaquetable como APK con Buildozer)
 Funciona en PC y en Android (Pydroid 3). Se adapta a cualquier pantalla:
 en vertical la cancha se gira para aprovechar el espacio.
 
@@ -10,11 +10,24 @@ tirar (más lejos = más potencia) y suelta.
 v4 - JUEGO LIBRE: no hay turnos. Cualquier equipo puede tirar en cualquier momento,
 con recarga INDEPENDIENTE de 1 s por equipo (sin congelar el balón ni la física).
 Solo el saque inicial es exclusivo del equipo que saca.
-Tiempo a escala: 90 min = 3 min reales (cada tiempo 1:30), prórroga 20 min = 40 s.
+Tiempo a escala (v7): 90 min = 5 min reales (cada tiempo 2:30); prórroga 20 min ~ 1:07
+(dos periodos de ~33,3 s).
 Penales: cuenta 3-2-1-¡PREPÁRATE!; apunta con A/D o flechas (PC) o con los
 botones táctiles bajo la portería (celular).
 v3: celebraciones sonoras propias de cada selección, zona táctil ampliada
 y dorsales aleatorios (el arquero siempre lleva el 1).
+v7: 24 selecciones (8 nuevas con bandera, camiseta, uniforme de arquero y sonido propio),
+control avanzado del arquero (botón ARQUERO: cámara lenta x0,75, DASH lateral con barra de
+potencia, estela y posesión del balón tras atajar), DASH también en los penales,
+y 15 % menos deslizamiento de las fichas.
+v8: en partido y prórroga el arquero se arrastra como cualquier ficha (sin botón ni flechas);
+al agarrarlo el juego va al 50 % hasta que el arquero toca el balón y este rebota.
+El arquero no puede salir de su área grande (barrera invisible solo para él), su potencia
+máxima es la mitad de la de un jugador de campo y tiene su propia recarga de 1 s.
+IA rival separada: arquero que lee la trayectoria del balón y jugadores de campo que
+pasan, atacan, defienden y rematan con potencia variable. Los penales no cambian.
+v9: música de fondo (musica_fondo.mp3 junto a main.py) con fade-in al 15 % y fade-out en
+penales, y botón de PAUSA (CONTINUAR / REINICIAR TORNEO) que congela todo, también la música.
 """
 import math
 import random
@@ -30,18 +43,66 @@ WX0, WX1, WY0, WY1 = FX0 - GD - 10, FX1 + GD + 10, FY0 - 12, FY1 + 12   # zona v
 RW, RH = WX1 - WX0, WY1 - WY0
 PR, BR = 18, 10                                  # radios ficha / balón
 PM, BM = 3.0, 1.0                                # masas
-FRICTION = 0.985
+FRICTION = 0.985                                 # balón (sin cambios)
+# v7: 15 % menos deslizamiento en las fichas (la distancia que resbalan baja un 15 %)
+PLAYER_FRICTION = 1 - (1 - FRICTION) / 0.85
 SUB = 4
 MAX_DRAG = 160
 POWER = 0.14
-# Tiempo a escala (regla de tres): 90 min de fútbol = 180 s reales -> 1 min = 2 s reales
-REAL_PER_MIN = 180.0 / 90.0
-HALF_REAL = 45 * REAL_PER_MIN                    # 90 s
-ET_REAL = 20 * REAL_PER_MIN                      # 40 s
-MARKS = [HALF_REAL, 2 * HALF_REAL, 2 * HALF_REAL + ET_REAL]   # 90 s, 180 s, 220 s
+# Tiempo a escala (regla de tres): 90 min de fútbol = 300 s reales -> 1 min = 3,33 s reales
+REAL_PER_MIN = 300.0 / 90.0
+HALF_REAL = 45 * REAL_PER_MIN                    # 150 s = 2:30
+ET_REAL = 20 * REAL_PER_MIN                      # 66,7 s ~ 1:07 (2 x 33,3 s)
+MARKS = [HALF_REAL, 2 * HALF_REAL, 2 * HALF_REAL + ET_REAL / 2, 2 * HALF_REAL + ET_REAL]
 COOLDOWN = 1.0                                   # recarga propia de cada equipo (s)
 CD_STEP = 0.8                                    # duración de cada número del conteo de penales
 PEN_X0 = FX1 - 330                               # zona visible en penales
+# --- v7: arquero
+SMALL_W, SMALL_H = 55, 70                        # área chica (profundidad, media altura)
+GK_OUT_SPEED = 0.10                              # fuera del área chica: 10 % de su velocidad
+SLOWMO = 0.75                                    # cámara lenta del arquero en PENALES (sin cambios)
+# --- v8: arquero en partido / prórroga
+SLOWMO_MATCH = 0.50                              # cámara lenta al arrastrar al arquero
+BIG_W, BIG_H = 150, 150                          # área grande (profundidad, media altura): barrera
+GK_POWER = 0.50                                  # potencia máxima del arquero = 50 % de la de campo
+GK_SLOW_MAX = 3.0                                # seguro: s reales máx. de cámara lenta tras soltar
+DASH_CHARGE = 0.5                                # s para llegar a potencia máxima
+DASH_MIN, DASH_MAX = 22, 150                     # distancia del DASH (mundo)
+DASH_V_MIN, DASH_V_MAX = 8.0, 17.0               # velocidad del DASH (mundo / fotograma)
+# --- v9: música de fondo (ajusta estos valores a tu gusto)
+MUSIC_FILE = "musica_fondo.mp3"                  # debe estar en la misma carpeta que main.py
+MUSIC_VOL = 0.15                                 # volumen objetivo: 15 % del máximo del archivo
+MUSIC_PEN_VOL = 0.05                             # en penales baja (fade-out) hasta este nivel
+MUSIC_FADE_IN = 4.0                              # s del fade-in al empezar el partido
+MUSIC_FADE_OUT = 3.0                             # s del fade-out al llegar a los penales
+MUSIC_END_FADE = 2.0                             # s del fade final al terminar el partido
+
+# Reloj de juego (v9): igual que time.monotonic() pero se detiene mientras hay PAUSA,
+# así cronómetro, recargas, conteos, cámara lenta y mensajes siguen exactos al reanudar.
+_PAUSE = {"total": 0.0, "since": None}
+
+
+def vnow():
+    t = time.monotonic()
+    if _PAUSE["since"] is not None:
+        t = _PAUSE["since"]
+    return t - _PAUSE["total"]
+
+
+def clock_pause(on):
+    t = time.monotonic()
+    if on and _PAUSE["since"] is None:
+        _PAUSE["since"] = t
+    elif not on and _PAUSE["since"] is not None:
+        _PAUSE["total"] += t - _PAUSE["since"]
+        _PAUSE["since"] = None
+
+
+TRAIL_T = 0.35                                   # duración de cada imagen de la estela
+# Gancho para el pase del arquero (se implementará aparte):
+#   def mi_pase(game, keeper): ...  y luego  game.release_ball(vx, vy)
+PASE_ARQUERO = None
+PASE_DELAY_MS = 700
 
 # Equipaciones: patrón, color 1, color 2, borde, rating, extra
 # patrones: solid, vstripes, hoops, sash, half, checks, chestband
@@ -62,11 +123,69 @@ TEAMS = {
     "México":         ("sash",      "#00b560", "#ff2b3a", "#ffffff", 81, None),
     "Estados Unidos": ("hoops",     "#ffffff", "#ff2b3a", "#1f4dff", 80, None),
     "Chile":          ("half",      "#ff2a1f", "#1f55ff", "#ffffff", 79, None),
+    # --- v7: 8 selecciones nuevas
+    "Suecia":         ("chestband", "#ffd800", "#1a5cff", "#1a5cff", 80, ["#1a5cff", "#ffd800", "#1a5cff"]),
+    "Dinamarca":      ("pinstripes", "#ff1f2f", "#ffffff", "#ffffff", 81, None),
+    "Suiza":          ("cross",     "#ff1a1a", "#ffffff", "#ffffff", 80, None),
+    "Polonia":        ("hhalf",     "#ffffff", "#ff1f3d", "#ff1f3d", 79, None),
+    "Hungría":        ("chestband", "#ff2030", "#ffffff", "#00b050", 78, ["#ffffff", "#00c060", "#ffffff"]),
+    "Paraguay":       ("vstripes",  "#ffffff", "#ff1f2f", "#1f4dff", 78, None),
+    "Perú":           ("sash",      "#ffffff", "#ff1f2f", "#ff1f2f", 79, None),
+    "Ecuador":        ("chestband", "#ffe100", "#1f4dff", "#1f4dff", 78, ["#1f4dff", "#ff1f2f", "#1f4dff"]),
 }
 ABBR = {"España": "ESP", "Francia": "FRA", "Alemania": "ALE", "Inglaterra": "ING", "Italia": "ITA",
         "Portugal": "POR", "Países Bajos": "PBA", "Bélgica": "BEL", "Croacia": "CRO",
         "Argentina": "ARG", "Brasil": "BRA", "Uruguay": "URU", "Colombia": "COL",
-        "México": "MEX", "Estados Unidos": "USA", "Chile": "CHI"}
+        "México": "MEX", "Estados Unidos": "USA", "Chile": "CHI",
+        "Suecia": "SUE", "Dinamarca": "DIN", "Suiza": "SUI", "Polonia": "POL", "Hungría": "HUN",
+        "Paraguay": "PAR", "Perú": "PER", "Ecuador": "ECU"}
+# v7: nombre completo y nombre corto (espacios reducidos)
+FULL_NAME = {t: f"Selección de {t}" for t in TEAMS}
+FULL_NAME.update({"Países Bajos": "Selección de los Países Bajos",
+                  "Estados Unidos": "Selección de los Estados Unidos"})
+SHORT = {t: t for t in TEAMS}
+SHORT.update({"Países Bajos": "P. Bajos", "Estados Unidos": "EE. UU."})
+# v7: banderas  (tipo, franjas, detalles)
+#   "h"/"v" = franjas horizontales/verticales; detalles: canton, dot, cross, nordic, swiss, diamond
+FLAGS = {
+    "España":         ("h", ["#c60b1e", "#ffc400", "#ffc400", "#c60b1e"], []),
+    "Francia":        ("v", ["#0055a4", "#ffffff", "#ef4135"], []),
+    "Alemania":       ("h", ["#000000", "#dd0000", "#ffce00"], []),
+    "Inglaterra":     ("h", ["#ffffff"], [("cross", "#ce1124", 0.2)]),
+    "Italia":         ("v", ["#009246", "#ffffff", "#ce2b37"], []),
+    "Portugal":       ("v", ["#006600", "#006600", "#ff0000", "#ff0000", "#ff0000"], [("dot", "#ffcc00", 0.4, 0.5, 0.2)]),
+    "Países Bajos":   ("h", ["#ae1c28", "#ffffff", "#21468b"], []),
+    "Bélgica":        ("v", ["#000000", "#fdda24", "#ef3340"], []),
+    "Croacia":        ("h", ["#ff0000", "#ffffff", "#171796"], [("dot", "#ff0000", 0.5, 0.5, 0.15)]),
+    "Argentina":      ("h", ["#74acdf", "#ffffff", "#74acdf"], [("dot", "#f6b40e", 0.5, 0.5, 0.12)]),
+    "Brasil":         ("h", ["#009c3b"], [("diamond", "#ffdf00"), ("dot", "#002776", 0.5, 0.5, 0.2)]),
+    "Uruguay":        ("h", ["#ffffff", "#0038a8"] * 4 + ["#ffffff"], [("canton", "#ffffff", 0.4, 5 / 9),
+                                                                         ("dot", "#fcd116", 0.2, 0.28, 0.14)]),
+    "Colombia":       ("h", ["#fcd116", "#fcd116", "#003893", "#ce1126"], []),
+    "México":         ("v", ["#006847", "#ffffff", "#ce1126"], [("dot", "#8b5a2b", 0.5, 0.5, 0.13)]),
+    "Estados Unidos": ("h", ["#b22234", "#ffffff"] * 3 + ["#b22234"], [("canton", "#3c3b6e", 0.42, 4 / 7)]),
+    "Chile":          ("h", ["#ffffff", "#d52b1e"], [("canton", "#0039a6", 1 / 3, 0.5), ("dot", "#ffffff", 1 / 6, 0.25, 0.1)]),
+    "Suecia":         ("h", ["#006aa7"], [("nordic", "#fecc00", 0.2)]),
+    "Dinamarca":      ("h", ["#c8102e"], [("nordic", "#ffffff", 0.14)]),
+    "Suiza":          ("h", ["#ff0000"], [("swiss", "#ffffff")]),
+    "Polonia":        ("h", ["#ffffff", "#dc143c"], []),
+    "Hungría":        ("h", ["#cd2a3e", "#ffffff", "#436f4d"], []),
+    "Paraguay":       ("h", ["#d52b1e", "#ffffff", "#0038a8"], [("dot", "#fcd116", 0.5, 0.5, 0.11)]),
+    "Perú":           ("v", ["#d91023", "#ffffff", "#d91023"], []),
+    "Ecuador":        ("h", ["#ffdd00", "#ffdd00", "#034ea2", "#ed1c24"], [("dot", "#8b5a2b", 0.5, 0.5, 0.12)]),
+}
+# v7: uniforme propio del arquero para las nuevas selecciones (base, franja, borde).
+# Las 16 originales conservan su uniforme de arquero de siempre.
+GK_KIT = {
+    "Suecia":    ("#9b4dff", "#ffd800", "#ffd800"),
+    "Dinamarca": ("#00e5ff", "#111111", "#ff1f2f"),
+    "Suiza":     ("#28d17c", "#ffffff", "#c40000"),
+    "Polonia":   ("#00d26a", "#ffffff", "#111111"),
+    "Hungría":   ("#ffb000", "#111111", "#111111"),
+    "Paraguay":  ("#ff8c00", "#1f4dff", "#ffffff"),
+    "Perú":      ("#2ad4ff", "#ff1f2f", "#ffffff"),
+    "Ecuador":   ("#ff3fa4", "#ffffff", "#1f4dff"),
+}
 
 # ------------------------------------------------------------------ SONIDO (sintetizado aquí mismo)
 # Todos los sonidos se generan matemáticamente al ejecutar el juego: son 100 % originales,
@@ -166,7 +285,7 @@ class _CanvasWidget(_Widget):
         with self.canvas:
             f = _rgb(fill)
             if f:
-                _Color(*f)
+                _Color(*f, kw.get("alpha", 1.0))
                 _Rect(pos=(xa, ya), size=(xb - xa, yb - ya))
             w = float(width or 0)
             o = _rgb(outline)
@@ -180,7 +299,7 @@ class _CanvasWidget(_Widget):
         with self.canvas:
             f = _rgb(fill)
             if f:
-                _Color(*f)
+                _Color(*f, kw.get("alpha", 1.0))
                 _Ellipse(pos=(xa, ya), size=(xb - xa, yb - ya))
             w = float(width or 0)
             o = _rgb(outline)
@@ -325,6 +444,7 @@ class _Root:
         self.keys = {}
         self.widget = None
         _Window.bind(on_key_down=self._key)
+        _Window.bind(on_key_up=self._keyup)
 
     def title(self, *a):
         pass
@@ -371,6 +491,17 @@ class _Root:
         return False
 
 
+    def _keyup(self, win, key, *a):
+        name = self.KEYS.get(key)
+        if name:
+            for seq in (f"<KeyRelease-{name}>", f"<KeyRelease-{name.upper()}>"):
+                fn = self.keys.get(seq)
+                if fn:
+                    fn(_Ev())
+                    return True
+        return False
+
+
 class tk:                                   # espacio de nombres compatible con "tk."
     TclError = _TclError
     Tk = _Root
@@ -383,7 +514,7 @@ class tk:                                   # espacio de nombres compatible con 
 
 
 SR = 16000                                           # muestras por segundo (ligero para móviles)
-SND_DIR = os.path.join(os.environ.get("ANDROID_PRIVATE") or tempfile.gettempdir(), "mundial_chapas_snd_v3")
+SND_DIR = os.path.join(os.environ.get("ANDROID_PRIVATE") or tempfile.gettempdir(), "mundial_chapas_snd_v7")
 
 # Identidad sonora por selección: tempo, nota base (Hz), instrumento, percusión, melodía
 # melodía: "semitono:duración_en_tiempos" ; "r" = silencio
@@ -404,6 +535,15 @@ SOUND_ID = {
     "México":         (110, 392.0, "mariachi",  "huapango",  "0:.5 4:.5 7:1.5 4:.5 5:.5 9:.5 7:1.5 4:.5 0:2"),
     "Estados Unidos": (118, 293.7, "synth",     "rock",      "0:.5 7:.5 12:1 11:.5 12:.5 14:1 12:2"),
     "Chile":          (124, 311.1, "voice",     "clap",      "0:.5 0:.5 0:.5 r:.5 5:.5 5:.5 5:.5 r:.5 7:.5 7:.5 5:.5 3:.5 0:2"),
+    # --- v7: identidades sonoras nuevas (melodías originales)
+    "Suecia":         (108, 261.6, "alphorn",   "march",     "0:1 4:1 7:1 12:2 11:.5 9:.5 7:1 4:1 7:2"),
+    "Dinamarca":      (126, 293.7, "organ",     "clap",      "0:.5 2:.5 4:1 2:.5 0:.5 7:1 5:.5 4:.5 2:.5 4:.5 0:2"),
+    "Suiza":          (96,  233.1, "alphorn",   "waltz",     "0:1.5 7:.5 12:1 9:1 7:1 4:1 7:3"),
+    "Polonia":        (134, 311.1, "accordion", "polka",     "0:.5 4:.5 7:.5 4:.5 9:.5 7:.5 4:.5 0:.5 2:.5 4:.5 2:.5 0:2"),
+    "Hungría":        (112, 277.2, "violin",    "clap",      "0:.5 1:.5 4:.5 5:.5 7:1 8:.5 7:.5 5:.5 4:.5 1:.5 0:2"),
+    "Paraguay":       (120, 329.6, "harp",      "galopa",    "0:.5 4:.5 7:.5 9:.5 12:1 9:.5 7:.5 4:.5 7:.5 0:2"),
+    "Perú":           (114, 392.0, "flute",     "huayno",    "0:.5 3:.5 5:.5 7:1 5:.5 3:.5 0:.5 -2:.5 0:2"),
+    "Ecuador":        (124, 261.6, "marimba",   "bomba",     "0:.5 4:.5 7:.5 4:.5 9:1 7:.5 4:.5 5:.5 2:.5 0:2"),
 }
 
 HARM = {   # (lista de armónicos (n, amplitud), vibrato, ataque s)
@@ -416,6 +556,12 @@ HARM = {   # (lista de armónicos (n, amplitud), vibrato, ataque s)
     "whistle":   ([(1, 1), (2, .1)], 0.02, 0.01),
     "mariachi":  ([(1, 1), (2, .9), (3, .7), (4, .5), (5, .35), (6, .2)], 0.009, 0.02),
     "synth":     ([(1, 1), (2, .5), (3, .33), (4, .25), (5, .2)], 0.003, 0.01),
+    # --- v7
+    "alphorn":   ([(1, 1), (2, .45), (3, .2)], 0.003, 0.12),
+    "violin":    ([(1, 1), (2, .7), (3, .55), (4, .4), (5, .3), (6, .2), (7, .1)], 0.016, 0.04),
+    "harp":      ([(1, 1), (2, .35), (3, .15)], 0.0, 0.002),
+    "flute":     ([(1, 1), (2, .25), (3, .08)], 0.011, 0.05),
+    "marimba":   ([(1, 1), (4, .3), (10, .08)], 0.0, 0.002),
 }
 DRUMS = {  # golpes por compás de 4 tiempos: (tiempo, tipo)
     "pasodoble": [(0, "k"), (1, "s"), (2, "k"), (3, "s")],
@@ -429,7 +575,14 @@ DRUMS = {  # golpes por compás de 4 tiempos: (tiempo, tipo)
     "cumbia":    [(t / 2, "h") for t in range(8)] + [(0, "k"), (1, "s"), (2, "k"), (3, "s"), (3.5, "s")],
     "huapango":  [(0, "k"), (0.75, "c"), (1.5, "c"), (2, "k"), (2.75, "c"), (3.5, "c")],
     "rock":      [(t / 2, "h") for t in range(8)] + [(0, "k"), (1, "s"), (1.5, "k"), (2, "k"), (3, "s")],
+    # --- v7
+    "waltz":     [(0, "k"), (1, "h"), (2, "h"), (3, "k")],
+    "polka":     [(0, "k"), (0.5, "h"), (1, "s"), (1.5, "h"), (2, "k"), (2.5, "h"), (3, "s"), (3.5, "h")],
+    "galopa":    [(0, "b"), (1.5, "c"), (2, "b"), (3, "c"), (3.5, "c")],
+    "huayno":    [(0, "b"), (0.75, "b"), (1, "s"), (2, "b"), (2.75, "b"), (3, "s")],
+    "bomba":     [(0, "b"), (1, "c"), (1.5, "b"), (2.5, "c"), (3, "b"), (3.5, "c")],
 }
+PLUCK = {"guitar": 6, "harp": 4, "marimba": 11}
 
 
 def _buf(sec):
@@ -440,7 +593,7 @@ def _tone(buf, t0, dur, f, inst, vol):
     harm, vib, att = HARM[inst]
     i0, n = int(t0 * SR), int(dur * SR)
     rel = min(0.08, dur * 0.4)
-    pluck = inst == "guitar"
+    pluck = PLUCK.get(inst, 0)
     ph = 0.0
     for i in range(n):
         j = i0 + i
@@ -449,7 +602,7 @@ def _tone(buf, t0, dur, f, inst, vol):
         t = i / SR
         env = min(1.0, t / att) if att else 1.0
         if pluck:
-            env *= math.exp(-t * 6)
+            env *= math.exp(-t * pluck)
         if t > dur - rel:
             env *= max(0.0, (dur - t) / rel)
         ph += math.tau * f * (1 + vib * math.sin(math.tau * 5.5 * t)) / SR
@@ -716,6 +869,117 @@ class Sound:
             pass
 
 
+class Music:
+    """v9: música de fondo en bucle con fundidos de volumen que avanzan con el reloj de juego
+    (se congelan en la pausa) y pausa/reanudación desde la misma posición."""
+
+    def __init__(self, snd):
+        self.snd = snd
+        self.s = None
+        self.vol, self.target, self.rate = 0.0, 0.0, 0.0
+        self.stop_at_zero = False
+        self.paused_pos = None
+        self.path = None
+        base = os.path.dirname(os.path.abspath(__file__))
+        for name in (MUSIC_FILE, "musica_fondo.ogg", "musica_fondo.wav"):
+            for d in (base, os.getcwd()):
+                p = os.path.join(d, name)
+                if os.path.exists(p):
+                    self.path = p
+                    break
+            if self.path:
+                break
+
+    def _load(self):
+        if self.s is None and self.path:
+            try:
+                from kivy.core.audio import SoundLoader
+                self.s = SoundLoader.load(self.path)
+                if self.s:
+                    self.s.loop = True
+            except Exception:
+                self.s = None
+        return self.s
+
+    def _apply(self):
+        if self.s:
+            try:
+                self.s.volume = self.vol if self.snd.on else 0.0
+            except Exception:
+                pass
+
+    def fade_to(self, target, secs):
+        self.target = max(0.0, min(1.0, target))
+        self.rate = abs(self.target - self.vol) / max(0.05, secs)
+
+    def start(self):                                  # comienzo de cada partido: desde 0 %
+        s = self._load()
+        if not s:
+            return
+        self.paused_pos = None
+        self.stop_at_zero = False
+        self.vol = 0.0
+        self._apply()
+        try:
+            s.stop()
+            s.play()
+            s.seek(0)
+        except Exception:
+            pass
+        self._apply()
+        self.fade_to(MUSIC_VOL, MUSIC_FADE_IN)
+
+    def fade_out_end(self):
+        if self.s:
+            self.stop_at_zero = True
+            self.fade_to(0.0, MUSIC_END_FADE)
+
+    def stop(self):
+        self.vol, self.target, self.rate = 0.0, 0.0, 0.0
+        self.paused_pos = None
+        self.stop_at_zero = False
+        if self.s:
+            try:
+                self.s.stop()
+            except Exception:
+                pass
+
+    def update(self, dt):                             # solo se llama cuando NO hay pausa
+        if not self.s or self.paused_pos is not None:
+            return
+        if self.vol != self.target:
+            step = self.rate * dt
+            if abs(self.target - self.vol) <= step:
+                self.vol = self.target
+            else:
+                self.vol += step if self.target > self.vol else -step
+        self._apply()
+        if self.stop_at_zero and self.vol <= 0.0:
+            self.stop()
+
+    def pause(self):
+        if not self.s or self.paused_pos is not None:
+            return
+        try:
+            if self.s.state == "play":
+                self.paused_pos = max(0.0, self.s.get_pos() or 0.0)
+                self.s.stop()
+        except Exception:
+            self.paused_pos = None
+
+    def resume(self):                                 # sigue desde el mismo punto y mismo fundido
+        if not self.s or self.paused_pos is None:
+            return
+        pos, self.paused_pos = self.paused_pos, None
+        try:
+            self.s.play()
+            self._apply()
+            if pos > 0:
+                self.s.seek(pos)
+        except Exception:
+            pass
+
+
 FORMATION = [(0.04, 0.5), (0.18, 0.3), (0.18, 0.7), (0.32, 0.38), (0.32, 0.62), (0.44, 0.5)]
 ROUND_NAMES = ["Octavos de final", "Cuartos de final", "Semifinales", "FINAL"]
 BG = "#0a5a2a"
@@ -788,18 +1052,49 @@ def collide(a, b):
     b.vx += j * nx / b.m; b.vy += j * ny / b.m
 
 
-def step(bodies, ball):
+def step(bodies, ball, scale=1.0, zone=None, catcher=None, limit=None, touch=None):
+    """Avanza la física un fotograma.
+    scale: velocidad del tiempo (0,75 = cámara lenta). zone(b): factor de velocidad del arquero
+    según esté dentro/fuera del área chica. catcher: arquero que puede atrapar el balón.
+    limit(b): barrera del área grande (solo se llama para arqueros).
+    touch: dict {"k": arquero, "hit": False}; marca hit=True si ese arquero toca el balón.
+    Devuelve True si `catcher` atrapó el balón en este fotograma."""
+    caught = False
     for _ in range(SUB):
         for b in bodies:
-            b.x += b.vx / SUB; b.y += b.vy / SUB
+            k = scale / SUB
+            if zone is not None and b.keeper:
+                k *= zone(b)
+            b.x += b.vx * k; b.y += b.vy * k
             walls(b, b is ball)
+            if limit is not None and b.keeper:
+                limit(b)
+        if touch is not None and not touch["hit"]:
+            tk_ = touch["k"]
+            if math.hypot(ball.x - tk_.x, ball.y - tk_.y) <= tk_.r + ball.r + 1.0:
+                touch["hit"] = True
+        if catcher is not None and not caught:
+            if math.hypot(ball.x - catcher.x, ball.y - catcher.y) <= catcher.r + ball.r + 1.5:
+                caught = True
+                ball.vx = ball.vy = 0.0
         for i in range(len(bodies)):
             for k in range(i + 1, len(bodies)):
                 collide(bodies[i], bodies[k])
     for b in bodies:
-        b.vx *= FRICTION; b.vy *= FRICTION
+        f = FRICTION if b is ball else PLAYER_FRICTION
+        if scale != 1.0:
+            f = f ** scale
+        b.vx *= f; b.vy *= f
         if b.speed() < 0.06:
             b.vx = b.vy = 0.0
+    return caught
+
+
+def mix(c1, c2, t):
+    t = min(1.0, max(0.0, t))
+    a = [int(c1[i:i + 2], 16) for i in (1, 3, 5)]
+    b = [int(c2[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#%02x%02x%02x" % tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 
 # ------------------------------------------------------------------ geometría de camisetas
@@ -857,6 +1152,14 @@ def kit_shapes(pattern, c1, c2, extra):
         for k, col in enumerate(extra):
             u = -0.05 + (k - 1) * h
             shapes.append((band(0, 1, u - h / 2, u + h / 2), col))
+    elif pattern == "pinstripes":                     # v7: rayas finas
+        for u in (-0.75, -0.375, 0.0, 0.375, 0.75):
+            shapes.append((band(1, 0, u - 0.05, u + 0.05), c2))
+    elif pattern == "cross":                          # v7: cruz al pecho
+        shapes.append((band(1, 0, -0.17, 0.17, [(0, 1, 0.55), (0, -1, 0.75)]), c2))
+        shapes.append((band(0, 1, -0.17, 0.17, [(1, 0, 0.6), (-1, 0, 0.6)]), c2))
+    elif pattern == "hhalf":                          # v7: mitad superior / inferior
+        shapes.append((band(0, 1, 0, 1.1), c2))
     return [(p, c) for p, c in shapes if len(p) >= 3]
 
 
@@ -867,7 +1170,11 @@ def kit_for(team, keeper=False, side=0):
     key = (team, keeper, side)
     if key not in KIT_CACHE:
         pat, c1, c2, edge, _, extra = TEAMS[team]
-        if keeper:
+        if keeper and team in GK_KIT:                 # v7: arquero propio de las nuevas
+            base, stripe, gedge = GK_KIT[team]
+            KIT_CACHE[key] = (base, [(band(0, 1, -0.12, 0.12), stripe),
+                                     (band(1, 0, -0.07, 0.07, [(0, 1, -0.12)]), stripe)], gedge)
+        elif keeper:
             base = "#b6ff00" if side == 0 else "#ff4fd8"
             if abs(lum(base) - lum(c1)) < 20:
                 base = "#00e5ff"
@@ -887,6 +1194,13 @@ class Game:
                        or min(sw, sh) < 900)
         self.pen_btns = []
         self.pen_hold = 0
+        self.ctrl_pad = 0
+        self.lock = False
+        self.pen_k = 0
+        self.bodies = []
+        self.ball = None
+        self.keeper = None
+        self.gk_reset()
         if self.mobile:
             root.geometry(f"{sw}x{sh}+0+0")
             try:
@@ -917,7 +1231,12 @@ class Game:
             root.bind(f"<KeyPress-{k}>", lambda e: self.pen_key(1))
         for k in ("space", "Return"):
             root.bind(f"<KeyPress-{k}>", lambda e: self.pen_key(0))
-        self.last_t = time.monotonic()
+        for k in ("a", "A", "Left", "d", "D", "Right"):        # v7: soltar = ejecutar DASH
+            root.bind(f"<KeyRelease-{k}>", lambda e: self.gk_release())
+        self.paused = False
+        self.gen = 0                                   # cambia al reiniciar: anula esperas viejas
+        self.music = Music(self.snd)
+        self.last_t = vnow()
         self.render()
         self.tick()
 
@@ -936,13 +1255,16 @@ class Game:
         if self.state == "pens":
             # vista de penales: portería arriba, así izquierda/derecha son naturales
             self.rot = True
-            self.pen_pad = self.u * 6.2 if self.mobile else self.u * 2.6
+            self.pen_pad = self.u * 7.4                 # botones + barra de potencia
             hh = h - self.pen_pad
             span = min(RH, 2 * 230)                    # ancho visible: área grande y algo más
             self.s = min(w / span, hh / (WX1 - PEN_X0))
             self.ox = w / 2 - (MY - WY0) * self.s      # portería centrada
             self.oy = self.hud + (hh - (WX1 - PEN_X0) * self.s) / 2
             return
+        # v7: franja inferior propia para los controles del arquero (no tapan la cancha)
+        self.ctrl_pad = 0                               # v8: ya no hay botones del arquero
+        h -= self.ctrl_pad
         if self.rot:
             self.s = min(w / RH, h / RW)
             self.ox = (w - RH * self.s) / 2
@@ -1001,7 +1323,7 @@ class Game:
         self.state = state
         self.render()
 
-    def button(self, cx, cy, w, h, text, cmd, bg="#ffd400", fg="#111111", font=None, team=None):
+    def button(self, cx, cy, w, h, text, cmd, bg="#ffd400", fg="#111111", font=None, team=None, flag=None):
         cv = self.cv
         x0, y0, x1, y1 = cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2
         sh = max(2, h * 0.08)
@@ -1011,11 +1333,20 @@ class Game:
         if team:
             r = h * 0.3
             jx = x0 + h * 0.5
+            right = x1
+            if flag:
+                r = min(h * 0.3, w * 0.12)
+                jx = x0 + r * 1.4
+                fw = min(h * 0.55, w * 0.18)
+                fh = fw * 0.66
+                right = x1 - fw - h * 0.1
+                self.draw_flag(right + h * 0.03, cy - fh / 2, fw, fh, flag)
             self.jersey(jx, cy, r, team)
-            tx = (jx + r + x1) / 2
+            tx = (jx + r + right) / 2
+            x1 = right
         cv.create_text(tx, cy, text=text, fill=fg, font=font or self.F(1.0), justify="center",
                        width=max(10, (x1 - tx) * 2 - 8))
-        self.buttons.append((x0, y0, x1, y1, cmd))
+        self.buttons.append((x0, y0, cx + w / 2, y1, cmd))
 
     def jersey(self, sx, sy, R, team, keeper=False, side=0, num=None):
         base, shapes, edge = kit_for(team, keeper, side)
@@ -1059,7 +1390,7 @@ class Game:
         self.pitch_bg()
         self.title(u * 2.2, "COPA MUNDIAL DE CHAPAS", 2.1)
         self.cv.create_text(cw / 2, u * 4.4, text="Elige tu selección", fill="#ffffff", font=self.F(1.2))
-        cols = 2 if cw < ch else 4
+        cols = 3 if cw < ch else 4
         rows = math.ceil(len(TEAMS) / cols)
         top, bottom = u * 5.6, ch - u * 4.6
         gap = u * 0.5
@@ -1070,9 +1401,10 @@ class Game:
             c = TEAMS[n][1]
             x = gap + (i % cols) * (bw + gap) + bw / 2
             y = y0 + (i // cols) * (bh + gap) + bh / 2
-            fs = min(1.05, bh / u * 0.32, bw / u / max(8, len(n) + 4) * 1.7)
-            self.button(x, y, bw, bh, f"{n}\n{rating(n)}", lambda n=n: self.start_tournament(n),
-                        bg="#123d24", fg="#ffffff", font=self.F(fs), team=n)
+            sn = SHORT[n]
+            fs = min(0.95, bh / u * 0.3, bw * 0.52 / (u * 0.62 * max(6, len(sn))))
+            self.button(x, y, bw, bh, f"{sn}\n{rating(n)}", lambda n=n: self.start_tournament(n),
+                        bg="#123d24", fg="#ffffff", font=self.F(fs), team=n, flag=n)
         self.button(cw / 2, ch - u * 3.5, min(cw * 0.6, u * 11), u * 1.6,
                     "Sonido: SÍ" if self.snd.on else "Sonido: NO", self.toggle_sound,
                     bg="#ffd400" if self.snd.on else "#555555", fg="#111111" if self.snd.on else "#ffffff",
@@ -1080,17 +1412,98 @@ class Game:
         self.cv.create_text(cw / 2, ch - u * 1.6, fill="#d9ffe6", font=self.F(0.8, False),
                             justify="center", width=cw * 0.94,
                             text="Arrastra desde tu ficha hacia donde quieras tirar: más estiras, más potencia.\n"
-                                 "Juego libre: ambos equipos tiran cuando quieran, cada uno con su propia recarga de 1 s.")
+                                 "Juego libre con recarga de 1 s por equipo. Arrastra al arquero: cámara lenta 50 % hasta que bloquee.")
 
     def toggle_sound(self):
         self.snd.on = not self.snd.on
         self.render()
 
+    # ---------------- v9: esperas que respetan la pausa
+    def later(self, ms, fn):
+        due, gen = vnow() + ms / 1000.0, self.gen
+
+        def check():
+            if gen != self.gen:
+                return                                 # torneo reiniciado: se descarta
+            if self.paused or vnow() < due:
+                self.root.after(30, check)
+            else:
+                fn()
+        self.root.after(min(ms, 30), check)
+
+    # ---------------- v9: pausa
+    def pause_rect(self):
+        h = self.hud * 0.62
+        m = self.hud * 0.19
+        return (m, m, m + h * 1.25, m + h)
+
+    def toggle_pause(self):
+        if self.state not in ("match", "pens"):
+            return
+        self.paused = not self.paused
+        clock_pause(self.paused)
+        if self.paused:
+            self.drag = None
+            self.pen_hold = 0
+            self.music.pause()
+        else:
+            self.music.resume()
+        self.last_t = vnow()
+        self.draw()
+
+    def restart_tournament(self):
+        self.paused = False
+        clock_pause(False)
+        self.gen += 1
+        self.drag = None
+        self.pen_hold = 0
+        self.gk_mode = False
+        self.music.stop()
+        self.go("menu")
+
+    def pause_menu_rects(self):
+        cw, ch, u = self.cw, self.ch, self.u
+        bw, bh = min(cw * 0.7, u * 16), max(u * 3.2, 48)
+        cx, cy = cw / 2, ch / 2
+        return [(cx - bw / 2, cy - bh * 0.15 - bh, cx + bw / 2, cy - bh * 0.15, "CONTINUAR", "#3cff6e",
+                 self.toggle_pause),
+                (cx - bw / 2, cy + bh * 0.55, cx + bw / 2, cy + bh * 1.55, "REINICIAR TORNEO", "#ff5a4a",
+                 self.restart_tournament)]
+
+    def draw_pause_button(self):
+        cv = self.cv
+        x0, y0, x1, y1 = self.pause_rect()
+        cv.create_rectangle(x0, y0, x1, y1, fill="#ffd400", outline="#ffffff", width=2)
+        bw, bh = (x1 - x0), (y1 - y0)
+        if self.paused:                                # triángulo de "play"
+            cv.create_polygon([x0 + bw * 0.35, y0 + bh * 0.22, x0 + bw * 0.35, y0 + bh * 0.78,
+                               x0 + bw * 0.72, y0 + bh * 0.5], fill="#111111")
+        else:                                          # dos barras de pausa
+            for fx in (0.3, 0.56):
+                cv.create_rectangle(x0 + bw * fx, y0 + bh * 0.22, x0 + bw * (fx + 0.14), y0 + bh * 0.78,
+                                    fill="#111111", width=0)
+
+    def draw_pause_overlay(self):
+        cv, cw, ch, u = self.cv, self.cw, self.ch, self.u
+        rects = self.pause_menu_rects()
+        bx0 = rects[0][0] - u * 1.5
+        bx1 = rects[0][2] + u * 1.5
+        by0 = rects[0][1] - u * 5
+        by1 = rects[1][3] + u * 1.5
+        cv.create_rectangle(bx0, by0, bx1, by1, fill="#0b3d1f", outline="#ffd400", width=3)
+        cv.create_text(cw / 2, by0 + u * 2.4, text="PAUSA", fill="#ffd400", font=self.F(2.0))
+        for x0, y0, x1, y1, txt, col, _ in rects:
+            cv.create_rectangle(x0, y0, x1, y1, fill=col, outline="#ffffff", width=2)
+            cv.create_text((x0 + x1) / 2, (y0 + y1) / 2, text=txt, fill="#111111", font=self.F(1.2))
+
     # ---------------- torneo
     def start_tournament(self, team):
         self.user = team
         self.snd.prepare(team)                         # se genera en segundo plano
-        self.round_teams = list(TEAMS)
+        # v7: 24 selecciones en el catálogo; a octavos van 16 (la tuya + 15 al azar)
+        others = [t for t in TEAMS if t != team]
+        random.shuffle(others)
+        self.round_teams = [team] + others[:15]
         random.shuffle(self.round_teams)
         self.round = 0
         self.results = []
@@ -1163,6 +1576,8 @@ class Game:
         self.pitch_bg()
         self.jersey(cw / 2, ch * 0.18, u * 2.5, self.user, num=10)
         self.title(ch * 0.33, self.end_msg, 2.0, self.end_col)
+        self.cv.create_text(cw / 2, ch * 0.39, text=FULL_NAME[self.user], fill="#d9ffe6",
+                            font=self.F(0.9, False), width=cw * 0.95)
         y = ch * 0.45
         for r, res in enumerate(self.results):
             for line in res:
@@ -1190,6 +1605,9 @@ class Game:
         self.kickoff(0)
         self.buttons = []
         self.snd.play("pito")
+        self.paused = False
+        clock_pause(False)
+        self.music.start()                             # v9: fade-in desde 0 % hasta MUSIC_VOL
 
     def reset_positions(self):
         self.bodies = []
@@ -1202,31 +1620,36 @@ class Game:
         self.ball = Body((FX0 + FX1) / 2, MY, BR, BM)
         self.bodies.append(self.ball)
         self.drag = None
+        self.gk_reset()
 
     def clock_text(self):
         """Tiempo de juego a escala: cada segundo real = 30 s de fútbol."""
         gs = int(self.clock * 60 / REAL_PER_MIN)
         return f"{gs // 60:02d}:{gs % 60:02d}"
 
-    def can_shoot(self, team, now=None):
-        now = time.monotonic() if now is None else now
+    def can_shoot(self, team, now=None, keeper=False):
+        now = vnow() if now is None else now
         if self.phase != "play":
             return False
+        if keeper:                                     # v8: el arquero tiene su propia recarga
+            return self.kick_team is None and now >= self.gk_next[team]
         if self.kick_team is not None:                 # saque inicial: solo el que saca
             return team == self.kick_team
         return now >= self.next_shot_at[team]          # recarga propia de ESE equipo
 
     def flash(self, text, secs=1.5):
-        self.msg, self.msg_until = text, time.monotonic() + secs
+        self.msg, self.msg_until = text, vnow() + secs
 
     def kickoff(self, team):
         """Solo `team` puede hacer el primer tiro; luego el juego es libre."""
-        now = time.monotonic()
+        now = vnow()
         self.phase = "play"
         self.kick_team = team
         self.next_shot_at = [now, now]                 # un temporizador por equipo
+        self.gk_next = [now, now]                      # v8: recarga propia de cada arquero
         self.pending = None
         self.ai_at = now + random.uniform(0.7, 1.2)
+        self.ai_gk_at = now + random.uniform(0.4, 0.8)
 
     def ai_delay(self):
         # reacción de la CPU tras terminar la recarga (mejor rating = más rápida)
@@ -1236,19 +1659,30 @@ class Game:
     def shoot(self, body, vx, vy):
         sp = math.hypot(vx, vy)
         cap = MAX_DRAG * POWER
+        if self.state == "match" and body.keeper:
+            cap *= GK_POWER                             # v8: arquero a la mitad de potencia
         if sp > cap:
             vx, vy = vx / sp * cap, vy / sp * cap
-        body.vx, body.vy = vx, vy
+        if self.state == "match" and self.held is body:
+            # el arquero con el balón: el arrastre lo suelta en esa dirección (el arquero no se mueve)
+            self.release_ball(vx * 1.3, vy * 1.3)
+        else:
+            body.vx, body.vy = vx, vy
         if self.state == "match":
-            now = time.monotonic()
+            now = vnow()
             self.shots += 1
             self.shooter = body.team
             self.kick_team = None                       # desde aquí, juego libre
             t = body.team
-            # solo se recarga el equipo que tiró; el rival NO se toca
-            self.next_shot_at[t] = now + COOLDOWN
-            if t == 1:
-                self.ai_at = self.next_shot_at[1] + self.ai_delay()
+            if body.keeper:                             # v8: el arquero no gasta la recarga del equipo
+                self.gk_next[t] = now + COOLDOWN
+                if t == 1:
+                    self.ai_gk_at = self.gk_next[1] + random.uniform(0.1, 0.35)
+            else:
+                # solo se recarga el equipo que tiró; el rival NO se toca
+                self.next_shot_at[t] = now + COOLDOWN
+                if t == 1:
+                    self.ai_at = self.next_shot_at[1] + self.ai_delay()
             self.snd.play("toque", dur=0.15)
         else:
             self.moving = True
@@ -1258,21 +1692,25 @@ class Game:
         """Gestiona descanso / fin / prórroga. Devuelve True si el partido no continúa normal."""
         if self.mark >= len(MARKS) or self.clock < MARKS[self.mark]:
             return False
-        m = MARKS[self.mark]
-        self.clock = m
+        i = self.mark
+        self.clock = MARKS[i]
         self.mark += 1
         tie = self.score[0] == self.score[1]
-        if m == MARKS[0]:
+        if i == 0:
             self.period = "2do tiempo"; self.flash("Descanso - ¡Segundo tiempo!", 2)
             self.snd.play("pito_medio")
             self.reset_positions(); self.kickoff(1)
-        elif m == MARKS[1]:
+        elif i == 1:
             if not tie:
                 self.snd.play("pito_final", dur=1.8)
                 self.match_over(); return True
-            self.period = "PRÓRROGA"; self.flash("¡Empate! Vamos a la prórroga", 2)
+            self.period = "PRÓRROGA 1"; self.flash("¡Empate! Vamos a la prórroga", 2)
             self.snd.play("pito_medio")
             self.reset_positions(); self.kickoff(0)
+        elif i == 2:
+            self.period = "PRÓRROGA 2"; self.flash("Cambio de lado: 2º tiempo de la prórroga", 2)
+            self.snd.play("pito_medio")
+            self.reset_positions(); self.kickoff(1)
         else:
             self.snd.play("pito_final", dur=1.8)
             if tie:
@@ -1281,32 +1719,160 @@ class Game:
                 self.match_over()
         return True
 
+    # ---------------- IA (v8): campo y arquero separados
+    def predict(self, b, t):
+        k = (1 - FRICTION ** t) / (1 - FRICTION)
+        return (min(max(b.x + b.vx * k, FX0 + 20), FX1 - 20),
+                min(max(b.y + b.vy * k, FY0 + 20), FY1 - 20))
+
+    def lane_free(self, x0, y0, x1, y1, team, gap=PR + BR + 4):
+        """True si ningún rival de `team` corta la línea (x0,y0)-(x1,y1)."""
+        dx, dy = x1 - x0, y1 - y0
+        L2 = dx * dx + dy * dy or 1
+        for p in self.bodies:
+            if p.team is None or p.team == team or p is self.ball:
+                continue
+            t = max(0.0, min(1.0, ((p.x - x0) * dx + (p.y - y0) * dy) / L2))
+            if math.hypot(x0 + dx * t - p.x, y0 + dy * t - p.y) < gap:
+                return False
+        return True
+
+    def strike(self, p, ax, ay, ball_v, noise):
+        """Lanza la ficha p para llegar a (ax, ay) y darle al balón ~ball_v."""
+        cap = MAX_DRAG * POWER
+        px, py = ax - p.x, ay - p.y
+        dist = math.hypot(px, py) or 1
+        # choque ficha(3)-balón(1) con e=0,92: el balón sale ~1,44 veces más rápido
+        v = ball_v / 1.44 + dist * (1 - PLAYER_FRICTION) * 1.1
+        v = min(max(v, cap * 0.35), cap)
+        ang = math.atan2(py, px) + random.gauss(0, noise)
+        self.shoot(p, math.cos(ang) * v, math.sin(ang) * v)
+
     def ai_shoot(self):
+        """Jugadores de campo de la CPU (el arquero NUNCA participa aquí)."""
         b = self.ball
-        t = 22
-        k = (1 - FRICTION ** t) / (1 - FRICTION)          # predicción de posición del balón
-        bx = min(max(b.x + b.vx * k, FX0 + 20), FX1 - 20)
-        by = min(max(b.y + b.vy * k, FY0 + 20), FY1 - 20)
-        gx, gy = FX0 - 10, MY + random.uniform(-40, 40)
-        dx, dy = gx - bx, gy - by
+        bx, by = self.predict(b, 22)
+        field = [p for p in self.bodies if p.team == 1 and not p.keeper]
+        noise = (100 - rating(self.teams[1])) * 0.005
+        cap = MAX_DRAG * POWER
+        ukeep = next((p for p in self.bodies if p.team == 0 and p.keeper), None)
+        # 1) objetivo: portería (apuntando lejos del arquero) o pase a un compañero mejor ubicado
+        gdist = math.hypot(bx - FX0, by - MY)
+        if ukeep is not None and ukeep.y > MY:
+            gy = random.uniform(GY0 + 12, MY - 10)
+        elif ukeep is not None:
+            gy = random.uniform(MY + 10, GY1 - 12)
+        else:
+            gy = MY + random.uniform(-45, 45)
+        target, kind, recv = (FX0 - 15, gy), "tiro", None
+        if gdist > 300 or not self.lane_free(bx, by, FX0, gy, 1):
+            best_m, best_s = None, (gdist * 0.9 if gdist <= 480 else 1e9)
+            for m in field:
+                d = math.hypot(m.x - bx, m.y - by)
+                if d < 90 or d > 460:                    # ni demasiado cerca ni demasiado lejos
+                    continue
+                if m.x > bx + 40 and gdist < 600:        # pases hacia atrás solo si estamos lejos
+                    continue
+                if not self.lane_free(bx, by, m.x, m.y, 1):
+                    continue
+                press = min((math.hypot(o.x - m.x, o.y - m.y) for o in self.bodies
+                             if o.team == 0), default=999)
+                s = math.hypot(m.x - FX0, m.y - MY) + d * 0.25 - min(press, 120) * 0.8
+                if s < best_s:
+                    best_m, best_s = m, s
+            if best_m is not None and random.random() < 0.8:
+                lead = 25 if best_m.x > FX0 + 60 else 0
+                target, kind, recv = (best_m.x - lead, best_m.y), "pase", best_m
+        tx, ty = target
+        dx, dy = tx - bx, ty - by
         d = math.hypot(dx, dy) or 1
         ux, uy = dx / d, dy / d
         ax, ay = bx - ux * (PR + BR - 3), by - uy * (PR + BR - 3)
+        # 2) quién golpea: el que mejor llega por detrás del balón (y no es el receptor)
         best, bscore = None, 1e9
-        for p in self.bodies:
-            if p.team != 1:
+        for p in field:
+            if p is recv:
                 continue
             dist = math.hypot(ax - p.x, ay - p.y)
             ahead = (p.x - bx) * ux + (p.y - by) * uy
-            score = dist + (600 if ahead > 0 else 0) + (250 if p.keeper else 0)
+            score = dist + (500 if ahead > 0 else 0)
             if score < bscore:
                 best, bscore = p, score
-        px, py = ax - best.x, ay - best.y
-        dist = math.hypot(px, py) or 1
-        noise = (100 - rating(self.teams[1])) * 0.006
-        ang = math.atan2(py, px) + random.gauss(0, noise)
-        sp = min((dist + 240) * (1 - FRICTION), MAX_DRAG * POWER)
-        self.shoot(best, math.cos(ang) * sp, math.sin(ang) * sp)
+        if best is None:
+            return
+        # 3) potencia
+        if kind == "tiro":
+            close = max(0.0, min(1.0, 1 - (gdist - 120) / 420))
+            ball_v = cap * 1.44 * random.uniform(0.72 + 0.2 * close, 0.95 + 0.05 * close)
+            ball_v = max(ball_v, cap * 1.44 * 0.7)           # nada de tiros flojos
+        else:
+            ball_v = d * (1 - FRICTION) * random.uniform(1.15, 1.35) + 2.0
+        # 4) si el balón está lejísimos y en nuestra mitad, un defensor se reubica (cubre espacio)
+        if math.hypot(ax - best.x, ay - best.y) > 420 and b.x > (FX0 + FX1) / 2 and random.random() < 0.5:
+            back = max(field, key=lambda p: p.x)
+            cx, cy = (b.x + FX1) / 2, (b.y + MY) / 2
+            dd = math.hypot(cx - back.x, cy - back.y)
+            if dd > 40:
+                v = min(dd * (1 - PLAYER_FRICTION), cap * 0.8)
+                self.shoot(back, (cx - back.x) / dd * v, (cy - back.y) / dd * v)
+                return
+        self.strike(best, ax, ay, ball_v, noise)
+
+    def gk_target(self, k):
+        """Punto al que debe ir un arquero: intercepta trayectorias o cubre el ángulo."""
+        b = self.ball
+        right = k.team == 1
+        line = FX1 if right else FX0
+        toward = (b.vx > 0.3) if right else (b.vx < -0.3)
+        gx = line - 28 if right else line + 28
+        if toward:
+            # trayectoria del balón hasta la x del arquero (con rebotes en bandas)
+            t = (k.x - b.x) / b.vx
+            if t > 0:
+                y = b.y + b.vy * t
+                h = FY1 - FY0
+                y = (y - FY0) % (2 * h)
+                y = FY0 + (y if y <= h else 2 * h - y)
+                return gx, y, True
+        dpen = abs(b.x - line)
+        if dpen < BIG_W - 5 and abs(b.y - MY) < BIG_H and b.speed() < 3:
+            return b.x, b.y, False                   # balón suelto en su área: salir a despejar
+        f = 0.25 + 0.35 * max(0.0, 1 - dpen / 600)
+        return gx + (-1 if right else 1) * min(60, max(0, 300 - dpen) * 0.2), MY + (b.y - MY) * f, False
+
+    def ai_keeper(self):
+        k = next((p for p in self.bodies if p.team == 1 and p.keeper), None)
+        if k is None:
+            return
+        tx, ty, urgent = self.gk_target(k)
+        tx, ty = self.clamp_area(k, tx, ty)
+        dx, dy = tx - k.x, ty - k.y
+        d = math.hypot(dx, dy)
+        if d < (8 if urgent else 16):
+            self.ai_gk_at = vnow() + random.uniform(0.15, 0.3)
+            return
+        cap = MAX_DRAG * POWER * GK_POWER
+        v = min(cap, d * (1 - PLAYER_FRICTION) * (1.35 if urgent else 1.05))
+        err = (100 - rating(self.teams[1])) * 0.004
+        a = math.atan2(dy, dx) + random.gauss(0, err)
+        self.shoot(k, math.cos(a) * v, math.sin(a) * v)
+
+    # ---------------- barrera del área grande (solo arqueros)
+    def clamp_area(self, k, x, y):
+        r = k.r
+        if k.team == 1:
+            x = min(max(x, FX1 - BIG_W + r), FX1 - r)
+        else:
+            x = min(max(x, FX0 + r), FX0 + BIG_W - r)
+        y = min(max(y, MY - BIG_H + r), MY + BIG_H - r)
+        return x, y
+
+    def keeper_limit(self, k):
+        nx, ny = self.clamp_area(k, k.x, k.y)
+        if nx != k.x:
+            k.x, k.vx = nx, -k.vx * 0.3
+        if ny != k.y:
+            k.y, k.vy = ny, -k.vy * 0.3
 
     def check_goal(self):
         b = self.ball
@@ -1317,18 +1883,32 @@ class Game:
         return None
 
     def match_update(self, dt):
-        now = time.monotonic()
+        now = vnow()
+        lim = self.keeper_limit                        # v8: barrera del área grande
         if self.phase == "goal":
-            step(self.bodies, self.ball)
+            step(self.bodies, self.ball, 1.0, None, None, lim)
             if now >= self.resume_at:
                 self.reset_positions()
                 if not self.check_period():
                     self.kickoff(1 - self.scorer)
             return
-        self.clock += dt                                # cronómetro automático
+        sl = self.slowmo()                              # 0,5 mientras controlas al arquero
+        self.clock += dt * sl                           # cronómetro automático (tiempo de juego)
         if self.check_period():
             return
-        step(self.bodies, self.ball)
+        touch = None
+        if self.gk_mode and self.gk_released_at is not None:
+            touch = {"k": self.ctrl_keeper(), "hit": False}
+        step(self.bodies, self.ball, sl, None, None, lim, touch)
+        if touch and touch["hit"]:                      # bloqueo + rebote: velocidad normal
+            self.gk_mode = False
+            self.gk_released_at = None
+            self.flash("¡BLOQUEO DEL ARQUERO!", 1.0)
+            self.snd.play("uy", dur=0.8)
+        elif (self.gk_mode and self.gk_released_at is not None
+              and now - self.gk_released_at > GK_SLOW_MAX):
+            self.gk_mode = False                        # seguro: no quedarse en cámara lenta
+            self.gk_released_at = None
         g = self.check_goal()
         if g is not None:
             self.score[g] += 1
@@ -1338,14 +1918,18 @@ class Game:
             self.phase = "goal"
             self.resume_at = now + 2.2
             self.drag = None
+            self.gk_mode = False; self.gk_ctrl = False; self.dash = None; self.gk_hold = 0
+            self.gk_released_at = None
             return
         # tiro del jugador soltado durante la recarga: sale apenas termina
-        if self.pending and self.can_shoot(0, now):
+        if self.pending and self.can_shoot(0, now, self.pending[0].keeper):
             p, vx, vy = self.pending
             self.pending = None
             self.shoot(p, vx, vy)
         if self.can_shoot(1, now) and now >= self.ai_at:
             self.ai_shoot()
+        if self.can_shoot(1, now, True) and now >= self.ai_gk_at:   # IA del arquero, independiente
+            self.ai_keeper()
 
     def match_over(self, pen_text=""):
         a, b = self.teams
@@ -1355,9 +1939,12 @@ class Game:
             w = a if self.score[0] > self.score[1] else b
         self.post_txt = f"{a} {self.score[0]}-{self.score[1]} {b}" + (f" ({pen_text})" if pen_text else "")
         self.post_w = w
+        self.paused = False
+        clock_pause(False)
+        self.music.fade_out_end()
         self.go("post")
         if not pen_text:                               # tras el pitazo, festeja el ganador
-            self.root.after(1500, lambda: self.state == "post" and self.snd.play("gana", w, 4))
+            self.later(1500, lambda: self.state == "post" and self.snd.play("gana", w, 4))
 
     def draw_post(self):
         cw, ch, u = self.cw, self.ch, self.u
@@ -1368,6 +1955,8 @@ class Game:
         self.jersey(cw * 0.7, ch * 0.42, u * 2, b, num=10)
         self.cv.create_text(cw / 2, ch * 0.42, text=f"{self.score[0]} - {self.score[1]}", fill="#ffffff",
                             font=self.F(2.2))
+        for x, t in ((cw * 0.3, a), (cw * 0.7, b)):
+            self.cv.create_text(x, ch * 0.42 + u * 3, text=SHORT[t], fill="#ffffff", font=self.F(0.9))
         self.cv.create_text(cw / 2, ch * 0.56, text=self.post_txt, fill="#ffffff", font=self.F(1.1),
                             width=cw * 0.92, justify="center")
         self.button(cw / 2, ch * 0.72, min(cw * 0.7, u * 14), u * 2.8, "Continuar",
@@ -1383,6 +1972,7 @@ class Game:
         self.go("pens")
         self.buttons = []
         self.flash("¡TANDA DE PENALES!", 2)
+        self.music.fade_to(MUSIC_PEN_VOL, MUSIC_FADE_OUT)   # v9: fade-out, sigue de fondo
 
     def setup_kick(self):
         shooter = self.pen_k % 2
@@ -1396,12 +1986,16 @@ class Game:
         self.aim_y = MY
         self.dived = False
         self.pen_hold = 0
-        self.cd_start = time.monotonic() + (2.0 if self.pen_k == 0 else 0.0)
+        self.cd_start = vnow() + (2.0 if self.pen_k == 0 else 0.0)
         self.ai_kick_at = None
+        self.ai_target = None
+        self.gk_reset()
+        if self.pen_k % 2 == 1:                         # v7: tú atajas -> arquero con DASH
+            self.anchor_keeper()
 
     def countdown(self, now=None):
         """Devuelve (texto, listo). 3 -> 2 -> 1 -> ¡PREPÁRATE! (desde aquí se puede tirar)."""
-        now = time.monotonic() if now is None else now
+        now = vnow() if now is None else now
         t = now - self.cd_start
         if t < 0:
             return None, False
@@ -1416,16 +2010,23 @@ class Game:
         return self.pen_wait and not self.lock and self.countdown()[1]
 
     def pen_key(self, d):
-        """d=-1 izquierda, 1 derecha, 0 tirar. Izquierda/derecha según el que mira a la portería."""
-        if self.state != "pens" or not self.pen_ready():
+        if self.paused:
             return
-        if self.pen_k % 2 == 0:
-            if d == 0:
-                self.pen_kick()
-            else:
-                self.move_aim(d * 14)
-        elif d != 0 and not self.dived:
-            self.user_dive(MY + d * GOAL_H * 0.45)
+        """d=-1 izquierda, 1 derecha, 0 tirar. Como arquero: mantener = cargar DASH, soltar = DASH."""
+        if self.state == "match":                       # v8: en partido el arquero se arrastra
+            return
+        if self.state != "pens":
+            return
+        if self.pen_k % 2 == 1:
+            if d != 0:
+                self.gk_press(d)
+            return
+        if not self.pen_ready():
+            return
+        if d == 0:
+            self.pen_kick()
+        else:
+            self.move_aim(d * 14)
 
     def move_aim(self, dy):
         self.aim_y = min(max(self.aim_y + dy, GY0 - 25), GY1 + 25)
@@ -1443,17 +2044,18 @@ class Game:
         self.dived = True
         self.ai_penalty(wy)
 
-    def pen_result(self, goal):
+    def pen_result(self, goal, msg=None):
         self.moving = False
+        self.gk_hold = 0
         self.pens[self.pen_k % 2].append(goal)
-        self.flash("¡GOL!" if goal else "¡FALLÓ / ATAJADA!", 1.3)
+        self.flash(msg or ("¡GOL!" if goal else "¡FALLÓ / ATAJADA!"), 1.3)
         if goal:
             self.snd.play("penal", self.teams[self.pen_k % 2], 1.2)
         else:
             self.snd.play("uy", dur=1.2)
         self.pen_k += 1
         self.lock = True
-        self.root.after(1500, self.next_kick)
+        self.later(1500, self.next_kick)
 
     def next_kick(self):
         if self.state != "pens":
@@ -1483,31 +2085,339 @@ class Game:
         self.ball.vx, self.ball.vy = dx / d * sp, dy / d * sp
         self.moving = True; self.frames = 0; self.pen_wait = False
 
+    def cpu_kick(self):
+        """La CPU tira el penal (tú atajas con DASH)."""
+        ty = self.ai_target if self.ai_target is not None else MY
+        dx, dy = FX1 + 30 - self.ball.x, ty - self.ball.y
+        d = math.hypot(dx, dy)
+        sp = random.uniform(8.5, 11.5)
+        self.ball.vx, self.ball.vy = dx / d * sp, dy / d * sp
+        self.moving = True; self.frames = 0; self.pen_wait = False
+        self.snd.play("toque", dur=0.15)
+
     def pens_update(self):
-        if self.pen_wait and not self.lock and self.countdown()[1]:
-            if self.pen_hold and self.pen_k % 2 == 0:
+        now = vnow()
+        user_keeps = self.pen_k % 2 == 1
+        sl = self.slowmo()
+        if self.pen_wait and not self.lock and self.countdown(now)[1]:
+            if self.pen_hold and not user_keeps:
                 self.move_aim(self.pen_hold * 3)
-            if self.pen_k % 2 == 1:                     # si no te lanzas en 2,5 s, la CPU tira igual
+            if user_keeps:                              # la CPU apunta y tira tras un instante
                 if self.ai_kick_at is None:
-                    self.ai_kick_at = time.monotonic() + 2.5
-                elif time.monotonic() >= self.ai_kick_at:
-                    self.dived = True
-                    self.ai_penalty(MY)
-                    self.keeper.vy = 0
+                    self.ai_kick_at = now + random.uniform(1.2, 2.0)
+                    self.ai_target = random.uniform(GY0 + 8, GY1 - 8) + random.gauss(0, 14)
+                elif now >= self.ai_kick_at:
+                    self.cpu_kick()
+        self.gk_update(sl)
+        if not self.moving and not self.dash:
+            return
+        catcher = self.keeper if (user_keeps and self.moving and self.held is None) else None
+        caught = step(self.bodies, self.ball, sl, self.gk_zone_factor, catcher)
+        if caught:
+            self.on_catch(self.keeper)
+        self.gk_after_step()
         if not self.moving:
             return
-        step(self.bodies, self.ball)
-        self.frames += 1
+        if caught:
+            self.pen_result(False, "¡ATAJADA!")
+            return
+        self.frames += sl
         b = self.ball
         if b.x - b.r > FX1 and GY0 < b.y < GY1:
             self.pen_result(True)
         elif b.speed() == 0 or self.frames > 300 or (b.vx < -0.5 and b.x < FX1 - 160):
             self.pen_result(False)
 
+    # ---------------- ARQUERO (v7): DASH lateral, cámara lenta y posesión
+    def gk_reset(self):
+        self.gk_mode = False        # control del arquero activo (cámara lenta)
+        self.gk_ctrl = False        # arquero anclado: solo se mueve con DASH lateral
+        self.gk_hold = 0            # flecha mantenida (-1 izquierda / 1 derecha)
+        self.gk_t0 = 0.0
+        self.gk_power = 0.0
+        self.dash = None
+        self.trail = []
+        self.held = None            # arquero que tiene el balón (posesión)
+        self.gk_ax = self.gk_ay = 0.0
+        self.gk_btns = []
+        self.gk_released_at = None  # v8: momento en que se soltó al arquero arrastrado
+
+    def ctrl_keeper(self):
+        """Arquero que controla el usuario."""
+        if self.state == "pens":
+            return self.keeper
+        for b in self.bodies:
+            if b.team == 0 and b.keeper:
+                return b
+        return None
+
+    def slowmo(self):
+        if self.state == "match":
+            return SLOWMO_MATCH if self.gk_mode else 1.0
+        if self.state == "pens" and self.pen_k % 2 == 1 and not self.lock and self.countdown()[1]:
+            return SLOWMO
+        return 1.0
+
+    def gk_allowed(self):
+        if self.state == "match":
+            return self.gk_mode and self.phase == "play"
+        if self.state == "pens":
+            return self.pen_k % 2 == 1 and not self.lock and self.countdown()[1]
+        return False
+
+    def gk_zone_factor(self, b):
+        """Arquero: velocidad normal dentro de su área chica, 10 % fuera de ella."""
+        right = self.state == "pens" or b.team == 1
+        m = b.r * 0.5
+        if right:
+            inx = FX1 - SMALL_W - m <= b.x <= FX1 + m
+        else:
+            inx = FX0 - m <= b.x <= FX0 + SMALL_W + m
+        return 1.0 if (inx and abs(b.y - MY) <= SMALL_H + m) else GK_OUT_SPEED
+
+    def anchor_keeper(self):
+        k = self.ctrl_keeper()
+        if k:
+            self.gk_ctrl = True
+            self.gk_ax, self.gk_ay = k.x, k.y
+            k.vx = k.vy = 0.0
+
+    def toggle_gk(self):
+        if self.state != "match" or self.phase != "play":
+            return
+        if self.held:
+            self.flash("Tu arquero tiene el balón", 1.2)
+            return
+        if self.gk_mode:
+            self.gk_mode = False; self.gk_ctrl = False; self.dash = None; self.gk_hold = 0
+        else:
+            self.gk_mode = True
+            self.anchor_keeper()
+            if self.drag is not None and self.drag.keeper:
+                self.drag = None
+
+    def gk_charge(self, now=None):
+        if not self.gk_hold:
+            return self.gk_power
+        now = vnow() if now is None else now
+        return min(1.0, (now - self.gk_t0) / DASH_CHARGE)
+
+    def gk_press(self, d):
+        if not self.gk_allowed() or self.gk_hold == d:
+            return
+        self.gk_hold = d
+        self.gk_t0 = vnow()
+
+    def gk_release(self):
+        if self.paused:
+            return
+        if not self.gk_hold:
+            return
+        d = self.gk_hold
+        p = max(0.08, self.gk_charge())
+        self.gk_hold = 0
+        self.gk_power = p
+        if self.gk_allowed():
+            self.start_dash(d, p)
+
+    def start_dash(self, d, p):
+        """DASH lateral: izquierda = -y, derecha = +y (izquierda/derecha de la pantalla en vertical)."""
+        k = self.ctrl_keeper()
+        if k is None:
+            return
+        if not self.gk_ctrl:
+            self.anchor_keeper()
+        dist = DASH_MIN + (DASH_MAX - DASH_MIN) * p
+        if self.state == "pens":
+            lo, hi = GY0 - 30, GY1 + 30
+        else:
+            lo, hi = FY0 + k.r, FY1 - k.r
+        ty = min(max(k.y + d * dist, lo), hi)
+        self.dash = {"k": k, "ty": ty, "v": DASH_V_MIN + (DASH_V_MAX - DASH_V_MIN) * p, "f": 0.0}
+        self.snd.play("toque", dur=0.1)
+
+    def gk_update(self, scale):
+        dsh = self.dash
+        if not dsh:
+            return
+        k = dsh["k"]
+        rem = dsh["ty"] - k.y
+        dsh["f"] += scale
+        if abs(rem) < 0.6 or dsh["f"] > 45:
+            k.vy = 0.0
+            self.dash = None
+            return
+        k.vx = 0.0
+        k.vy = math.copysign(min(abs(rem), dsh["v"]), rem)
+        self.trail.append((k.x, k.y, vnow(), k.team))
+
+    def gk_after_step(self):
+        """Mantiene al arquero donde terminó su DASH (no vuelve ni se mueve solo)."""
+        if not self.gk_ctrl:
+            return
+        k = self.ctrl_keeper()
+        if k is None:
+            return
+        k.x, k.vx = self.gk_ax, 0.0
+        if self.dash:
+            self.gk_ay = k.y
+        else:
+            k.y, k.vy = self.gk_ay, 0.0
+        if self.held is k:
+            self.pin_ball()
+
+    def pin_ball(self):
+        k, b = self.held, self.ball
+        face = 1 if k.x < (FX0 + FX1) / 2 else -1
+        b.x, b.y = k.x + face * (k.r + b.r + 1), k.y
+        b.vx = b.vy = 0.0
+
+    def on_catch(self, k):
+        """Atajada: el arquero se queda con el balón y vuelve la velocidad normal."""
+        self.held = k
+        self.dash = None
+        self.gk_hold = 0
+        k.vy = 0.0
+        self.gk_ctrl = True
+        self.gk_ax, self.gk_ay = k.x, k.y
+        self.pin_ball()
+        if self.state == "match":
+            self.gk_mode = False
+            self.flash("¡ATAJADA! El arquero tiene el balón", 1.6)
+            self.snd.play("uy", dur=1.0)
+            if callable(PASE_ARQUERO):                  # pase automático: se conectará después
+                self.later(PASE_DELAY_MS,
+                                lambda: self.held is k and self.state == "match" and PASE_ARQUERO(self, k))
+
+    def release_ball(self, vx, vy):
+        """Suelta el balón que tiene el arquero con velocidad (vx, vy). Pensado para el pase futuro."""
+        k = self.held
+        if k is None:
+            return
+        b = self.ball
+        sp = math.hypot(vx, vy) or 1.0
+        gap = k.r + b.r + 2
+        b.x, b.y = k.x + vx / sp * gap, k.y + vy / sp * gap
+        b.vx, b.vy = vx, vy
+        self.held = None
+        self.gk_ctrl = False
+
+    def draw_trail(self):
+        if not self.trail:
+            return
+        now = vnow()
+        self.trail = [g for g in self.trail if now - g[2] < TRAIL_T][-24:]
+        for x, y, t, team in self.trail:
+            a = 0.55 * (1 - (now - t) / TRAIL_T)
+            base, _, edge = kit_for(self.teams[team], True, team)
+            sx, sy = self.to_s(x, y)
+            R = PR * self.s
+            self.cv.create_oval(sx - R, sy - R, sx + R, sy + R, fill=base, width=0, alpha=a)
+
+    def draw_power(self, x0, y0, x1, y1, p):
+        """Barra horizontal verde -> amarillo -> rojo."""
+        cv = self.cv
+        cv.create_rectangle(x0 - 2, y0 - 2, x1 + 2, y1 + 2, fill="#111111", outline="#ffffff", width=2)
+        n = 30
+        w = (x1 - x0) / n
+        for i in range(n):
+            t = i / (n - 1)
+            col = mix("#2ee65a", "#ffd400", t * 2) if t < 0.5 else mix("#ffd400", "#ff2a2a", (t - 0.5) * 2)
+            on = (i + 0.5) / n <= p
+            cv.create_rectangle(x0 + i * w, y0, x0 + (i + 1) * w + 0.6, y1, fill=col, width=0,
+                                alpha=1.0 if on else 0.2)
+        cv.create_text((x0 + x1) / 2, (y0 + y1) / 2, text=f"DASH {int(p * 100)}%", fill="#ffffff",
+                       font=self.F(0.6))
+
+    def draw_gk_controls(self):
+        """Franja inferior: botón ARQUERO, barra de potencia y flechas (fuera de la cancha)."""
+        cv, u, P = self.cv, self.u, self.ctrl_pad
+        top = self.ch - P
+        cv.create_rectangle(0, top, self.cw, self.ch, fill="#062612", width=0)
+        self.gk_btns = []
+        bh = P * 0.56
+        by = self.ch - bh / 2 - P * 0.08
+        tw = min(self.cw * 0.2, u * 5.6)
+        tx = tw / 2 + u * 0.4
+        on = self.gk_mode
+        held = self.held is not None
+        fill = "#ffd400" if on else ("#4a4a4a" if held else "#1f6b3a")
+        cv.create_rectangle(tx - tw / 2, by - bh / 2, tx + tw / 2, by + bh / 2, fill=fill,
+                            outline="#ffffff", width=2)
+        cv.create_text(tx, by, text="ARQUERO\nACTIVO" if on else "ARQUERO", fill="#111111" if on else "#ffffff",
+                       font=self.F(0.75), justify="center", width=tw)
+        self.gk_btns.append((tx - tw / 2, by - bh / 2, tx + tw / 2, by + bh / 2, "gk"))
+        bw = min(self.cw * 0.24, u * 7)
+        cx = max(self.cw / 2, tx + tw / 2 + u * 0.9 + bw)
+        if on:
+            labels = ("< IZQ", "DER >") if self.rot else ("^ IZQ", "v DER")
+            for d, lab in ((-1, labels[0]), (1, labels[1])):
+                x = cx + d * (bw / 2 + u * 0.3)
+                act = self.gk_hold == d
+                cv.create_rectangle(x - bw / 2, by - bh / 2, x + bw / 2, by + bh / 2,
+                                    fill="#ffd400" if act else "#1f6b3a", outline="#ffffff", width=2)
+                cv.create_text(x, by, text=lab, fill="#111111" if act else "#ffffff", font=self.F(1.3))
+                self.gk_btns.append((x - bw / 2, by - bh / 2, x + bw / 2, by + bh / 2, d))
+            b0 = top + P * 0.1
+            self.draw_power(cx - bw - u * 0.3, b0, cx + bw + u * 0.3, b0 + P * 0.18, self.gk_charge())
+        else:
+            txt = ("Tu arquero tiene el balón: arrástralo para despejar" if held
+                   else "Toca ARQUERO: cámara lenta + DASH lateral para atajar")
+            cv.create_text((tx + tw / 2 + self.cw) / 2, by, text=txt, fill="#d9ffe6", font=self.F(0.8, False),
+                           width=self.cw - tw - u * 2)
+
+    def draw_flag(self, x, y, w, h, team):
+        cv = self.cv
+        kind, cols, extras = FLAGS[team]
+        n = len(cols)
+        for i, c in enumerate(cols):
+            if kind == "h":
+                cv.create_rectangle(x, y + i * h / n, x + w, y + (i + 1) * h / n + 0.5, fill=c, width=0)
+            else:
+                cv.create_rectangle(x + i * w / n, y, x + (i + 1) * w / n + 0.5, y + h, fill=c, width=0)
+        for e in extras:
+            t = e[0]
+            if t == "canton":
+                cv.create_rectangle(x, y, x + w * e[2], y + h * e[3], fill=e[1], width=0)
+            elif t == "dot":
+                r = h * e[4]
+                cx, cy = x + w * e[2], y + h * e[3]
+                cv.create_oval(cx - r, cy - r, cx + r, cy + r, fill=e[1], width=0)
+            elif t == "cross":
+                th = h * e[2]
+                cv.create_rectangle(x, y + h / 2 - th / 2, x + w, y + h / 2 + th / 2, fill=e[1], width=0)
+                cv.create_rectangle(x + w / 2 - th / 2, y, x + w / 2 + th / 2, y + h, fill=e[1], width=0)
+            elif t == "nordic":
+                th = h * e[2]
+                cx = x + w * 0.37
+                cv.create_rectangle(x, y + h / 2 - th / 2, x + w, y + h / 2 + th / 2, fill=e[1], width=0)
+                cv.create_rectangle(cx - th / 2, y, cx + th / 2, y + h, fill=e[1], width=0)
+            elif t == "swiss":
+                s = h * 0.6
+                a = s * 0.3
+                cx, cy = x + w / 2, y + h / 2
+                cv.create_rectangle(cx - s / 2, cy - a / 2, cx + s / 2, cy + a / 2, fill=e[1], width=0)
+                cv.create_rectangle(cx - a / 2, cy - s / 2, cx + a / 2, cy + s / 2, fill=e[1], width=0)
+            elif t == "diamond":
+                cv.create_polygon([x + w * 0.5, y + h * 0.1, x + w * 0.92, y + h * 0.5,
+                                   x + w * 0.5, y + h * 0.9, x + w * 0.08, y + h * 0.5], fill=e[1], width=0)
+        cv.create_rectangle(x, y, x + w, y + h, fill="", outline="#ffffff", width=1)
+
     # ---------------- entrada (ratón / táctil)
     def on_press(self, ev):
         if self.state not in ("match", "pens"):
             for x0, y0, x1, y1, cmd in list(self.buttons):
+                if x0 <= ev.x <= x1 and y0 <= ev.y <= y1:
+                    cmd()
+                    return
+            return
+        px0, py0, px1, py1 = self.pause_rect()          # v9: botón de pausa (zona táctil ampliada)
+        pad = self.u * 0.6
+        if px0 - pad <= ev.x <= px1 + pad and py0 - pad <= ev.y <= py1 + pad:
+            self.toggle_pause()
+            return
+        if self.paused:
+            for x0, y0, x1, y1, _, _, cmd in self.pause_menu_rects():
                 if x0 <= ev.x <= x1 and y0 <= ev.y <= y1:
                     cmd()
                     return
@@ -1530,17 +2440,18 @@ class Game:
                 return
             best, bd = None, reach
             for p in self.bodies:
-                if p.team == 0:
+                if p.team == 0 and not (p.keeper and self.kick_team is not None):
                     d = math.hypot(p.x - wx, p.y - wy)
                     if d <= bd:
                         best, bd = p, d
             self.drag = best
+            if best is not None and best.keeper:        # v8: agarrar al arquero = cámara lenta 50 %
+                self.gk_mode = True
+                self.gk_released_at = None
         elif self.pen_ready():
             if self.pen_k % 2 == 0:
                 if math.hypot(self.ball.x - wx, self.ball.y - wy) <= max(BR * 4, 50 / self.s):
                     self.drag = self.ball
-            elif not self.dived:
-                self.user_dive(wy)
 
     def full_drag(self):
         """Distancia (mundo) que da 100 % de potencia: en pantallas chicas basta con
@@ -1556,24 +2467,35 @@ class Game:
         return dx / d, dy / d, pw
 
     def on_motion(self, ev):
+        if self.paused:
+            return
         if self.state in ("match", "pens"):
             self.mouse_w = self.to_w(ev.x, ev.y)
 
     def on_release(self, ev):
         self.pen_hold = 0
+        if self.paused:
+            return
+        if self.gk_hold:                                # v7: soltar la flecha = DASH
+            self.gk_release()
+            return
         if not self.drag:
             return
         p = self.drag
         self.drag = None
         wx, wy = self.to_w(ev.x, ev.y)
         if math.hypot(wx - p.x, wy - p.y) < 6:
+            if self.state == "match" and p.keeper:
+                self.gk_mode = False                    # arrastre cancelado: velocidad normal
             return
+        if self.state == "match" and p.keeper:
+            self.gk_released_at = vnow()      # la cámara lenta sigue hasta el bloqueo
         ux, uy, pw = self.drag_vec(p, wx, wy)
         dx, dy = ux * pw * MAX_DRAG, uy * pw * MAX_DRAG
         if self.state == "match":
             if self.phase != "play" or self.kick_team == 1:
                 return
-            if self.can_shoot(0):
+            if self.can_shoot(0, None, p.keeper):
                 self.shoot(p, dx * POWER, dy * POWER)
             else:                                       # en recarga: se dispara al terminar
                 self.pending = (p, dx * POWER, dy * POWER)
@@ -1584,13 +2506,17 @@ class Game:
 
     # ---------------- bucle
     def tick(self):
-        now = time.monotonic()
+        now = vnow()
         dt = min(0.1, now - self.last_t)
         self.last_t = now
-        if self.state == "match":
+        if self.paused:
+            pass                                       # v9: todo congelado (reloj de juego parado)
+        elif self.state == "match":
             self.match_update(dt)
         elif self.state == "pens":
             self.pens_update()
+        if not self.paused:
+            self.music.update(dt)
         if self.state in ("match", "pens"):
             self.draw()
         self.root.after(16, self.tick)
@@ -1627,15 +2553,20 @@ class Game:
             self.circle_w(line, GY0, 4, fill="#ffffff", width=0)
             self.circle_w(line, GY1, 4, fill="#ffffff", width=0)
 
+        self.draw_trail()                               # v7: estela del DASH
         # resaltar fichas del equipo con turno
         active = self.state == "match" and self.can_shoot(0)
+        ck = self.ctrl_keeper() if self.gk_ctrl else None
         for b in self.bodies:
             if b is self.ball:
                 continue
             sx, sy = self.to_s(b.x, b.y)
             R = b.r * self.s
+            if b is ck:
+                cv.create_oval(sx - R * 1.45, sy - R * 1.45, sx + R * 1.45, sy + R * 1.45,
+                               outline="#00e5ff", width=max(2, R * 0.16))
             if active and b.team == 0:
-                pulse = 1.25 + 0.1 * math.sin(time.monotonic() * 8)
+                pulse = 1.25 + 0.1 * math.sin(vnow() * 8)
                 cv.create_oval(sx - R * pulse, sy - R * pulse, sx + R * pulse, sy + R * pulse,
                                outline="#fff36b", width=max(1.5, R * 0.14))
             self.jersey(sx, sy, R, self.teams[b.team], b.keeper, b.team, b.num)
@@ -1669,6 +2600,7 @@ class Game:
         if self.state == "pens":
             self.draw_pens_overlay()
         self.draw_hud()
+        self.draw_pause_button()
 
         cd = self.countdown()[0] if self.state == "pens" and self.pen_wait and not self.lock else None
         if cd:                                          # instrucción central sincronizada con el HUD
@@ -1678,13 +2610,15 @@ class Game:
             cv.create_text(fx + 3, fy + 3, text=cd, fill="#000000", font=f)
             cv.create_text(fx, fy, text=cd, fill="#ffd400", font=f)
             cv.create_text(fx, fy + self.u * 2.4, text=role, fill="#ffffff", font=self.F(1.0))
-        elif self.msg and time.monotonic() < self.msg_until:
+        elif self.msg and vnow() < self.msg_until:
             fx, fy = self.to_s((FX0 + FX1) / 2, MY)
             f = self.F(1.8)
             cv.create_text(fx + 3, fy + 3, text=self.msg, fill="#000000", font=f, width=self.cw * 0.9,
                            justify="center")
             cv.create_text(fx, fy, text=self.msg, fill="#ffd400", font=f, width=self.cw * 0.9,
                            justify="center")
+        if self.paused:
+            self.draw_pause_overlay()
 
     def draw_pens_overlay(self):
         cv, u = self.cv, self.u
@@ -1699,26 +2633,43 @@ class Game:
             self.line_w(self.ball.x, self.ball.y, ex, self.aim_y, fill=col, width=max(2, 4 * self.s),
                         dash=(6, 4), arrow="last")
             self.circle_w(ex, self.aim_y, 9, outline=col, width=max(2, 3 * self.s), fill="")
+        if (not user_kicks and self.pen_wait and self.ai_target is not None
+                and vnow() >= self.ai_kick_at - 0.8):   # mira del lanzador CPU
+            self.circle_w(FX1 + 8, self.ai_target, 10, outline="#ff3b3b", width=max(2, 3 * self.s), fill="")
         hint_y = top + u * 0.9
-        if self.mobile:
-            bh = min(u * 4.4, (self.ch - top) - u * 1.6)
+        if self.mobile or not user_kicks:
+            bh = min(u * 4.0, (self.ch - top) - u * 3.2)
             bw = min(self.cw * 0.28, u * 7)
             by = self.ch - bh / 2 - u * 0.4
             gx = self.to_s(FX1, MY)[0]                 # centrado bajo la portería
             gx = min(max(gx, bw * 1.6), self.cw - bw * 1.6)
-            items = [(gx - bw * 1.1, "< IZQ", -1), (gx + bw * 1.1, "DER >", 1)]
             if user_kicks:
-                items.insert(1, (gx, "TIRAR", 0))
+                items = [(gx - bw * 1.1, "< IZQ", -1), (gx, "TIRAR", 0), (gx + bw * 1.1, "DER >", 1)]
+            else:
+                items = [(gx - bw * 0.6, "< IZQ", -1), (gx + bw * 0.6, "DER >", 1)]
+            ok = self.gk_allowed()
             for x, txt, d in items:
                 w = bw if d else bw * 0.95
-                fill = ("#ffd400" if d == 0 else "#1f6b3a") if ready else "#3a3a3a"
+                if user_kicks:
+                    fill = ("#ffd400" if d == 0 else "#1f6b3a") if ready else "#3a3a3a"
+                else:
+                    fill = ("#ffd400" if self.gk_hold == d else "#1f6b3a") if ok else "#3a3a3a"
                 cv.create_rectangle(x - w / 2, by - bh / 2, x + w / 2, by + bh / 2, fill=fill,
                                     outline="#ffffff", width=2)
-                cv.create_text(x, by, text=txt, fill="#111111" if d == 0 and ready else "#ffffff",
+                cv.create_text(x, by, text=txt, fill="#111111" if fill == "#ffd400" else "#ffffff",
                                font=self.F(1.8 if d else 1.1))
                 self.pen_btns.append((x - w / 2, by - bh / 2, x + w / 2, by + bh / 2, d))
             hint_y = by - bh / 2 - u * 0.6
-            hint = "Flechas: apuntar · TIRAR o arrastra el balón" if user_kicks else "Flechas: lánzate a un lado"
+            if not user_kicks:                          # barra de potencia sobre las flechas
+                b0 = by - bh / 2 - u * 1.5
+                self.draw_power(gx - bw * 1.1, b0, gx + bw * 1.1, b0 + u * 0.9, self.gk_charge())
+                hint_y = b0 - u * 0.6
+            if user_kicks:
+                hint = "Flechas: apuntar · TIRAR o arrastra el balón"
+            elif self.mobile:
+                hint = "Mantén una flecha para cargar y suelta: DASH"
+            else:
+                hint = "Mantén A/D, flechas o los botones y suelta: DASH"
         else:
             hint = ("A/D o flechas: apuntar · ESPACIO o arrastra el balón: tirar" if user_kicks
                     else "A/D o flechas (o clic en la portería): lánzate")
@@ -1743,7 +2694,7 @@ class Game:
         self.jersey(cw / 2 + off + u * 3.6, row1, R, b)
         row2 = hud * 0.75
         if self.state == "match":
-            now = time.monotonic()
+            now = vnow()
             if self.phase == "goal":
                 who, frac, col = "¡GOL!", 0, "#ffd400"
             elif self.kick_team is not None:
@@ -1756,6 +2707,8 @@ class Game:
             else:
                 who, frac, col = "¡TIRA!", 1.0, "#3cff6e"
             info = f"{self.period}  ·  {self.clock_text()}  ·  {who}"
+            if self.gk_mode:
+                info += "  ·  CÁMARA LENTA"
             cv.create_rectangle(0, hud - u * 0.35, cw * frac, hud, fill=col, width=0)
         else:
             k = self.pen_k
