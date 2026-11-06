@@ -6,7 +6,7 @@ source.dir = .
 source.include_exts = py
 source.exclude_dirs = .github, bin, .buildozer
 version = 6.0
-requirements = python3,kivy==2.3.1
+requirements = python3
 orientation = portrait, landscape, portrait-reverse, landscape-reverse
 fullscreen = 1
 
