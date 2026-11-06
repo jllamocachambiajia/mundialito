@@ -1,18 +1,18 @@
 [app]
 title = Copa Mundial de Chapas
-package.name = mundialchapas
+package.name = mundialchapa
 package.domain = org.jose
 source.dir = .
-source.include_exts = py
+source.include_exts = py,png,jpg,kv
 source.exclude_dirs = .github, bin, .buildozer
-version = 6.0
-requirements = python3
-orientation = portrait, landscape, portrait-reverse, landscape-reverse
+version = 0.1
+requirements = python3,kivy
+orientation = portrait
 fullscreen = 1
 
 android.api = 34
 android.minapi = 21
-android.archs = arm64-v8a, armeabi-v7a
+android.archs = arm64-v8a
 android.accept_sdk_license = True
 android.allow_backup = True
 
