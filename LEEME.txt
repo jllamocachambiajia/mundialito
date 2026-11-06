@@ -1,0 +1,21 @@
+COPA MUNDIAL DE CHAPAS - Cómo obtener el APK (gratis, sin instalar nada)
+========================================================================
+
+1. Crea una cuenta gratis en https://github.com (si no tienes).
+2. Pulsa "+" > "New repository". Ponle un nombre (ej. mundial-chapas),
+   márcalo como "Public" y pulsa "Create repository".
+3. Pulsa "uploading an existing file" y arrastra TODO el contenido de esta
+   carpeta (main.py, buildozer.spec, LEEME.txt y la carpeta .github).
+   IMPORTANTE: la carpeta .github debe subirse. Si tu navegador no la deja
+   arrastrar, crea el archivo a mano: "Add file" > "Create new file", escribe
+   como nombre  .github/workflows/build-apk.yml  y pega dentro el contenido
+   de ese archivo.
+4. Pulsa "Commit changes".
+5. Ve a la pestaña "Actions". Verás "Crear APK" ejecutándose (círculo amarillo).
+   La primera vez tarda unos 20-30 minutos.
+6. Cuando salga la marca verde, entra en esa ejecución y abajo, en
+   "Artifacts", descarga "CopaMundialChapas-APK". Es un .zip: dentro está el .apk.
+7. Pasa el .apk al celular, ábrelo y permite "instalar apps de origen
+   desconocido" cuando Android lo pida.
+
+Para probar en PC antes:  pip install kivy   y luego   python main.py
