@@ -1,12 +1,11 @@
-"""Reusable vector resources, bounded GIF and Kivy screen transitions."""
+"""Reusable PNG resources, bounded GIF and Kivy screen transitions."""
 import functools
 import json
 import os
 import time
 from pathlib import Path
 from kivy.animation import Animation
-from kivy.graphics import Color, Rectangle, PushMatrix, PopMatrix, Translate, Scale, InstructionGroup
-from kivy.graphics.svg import Svg
+from kivy.graphics import Color, Rectangle, InstructionGroup
 from kivy.core.image import Image as CoreImage
 
 BASE = Path(__file__).resolve().parent
@@ -25,7 +24,8 @@ def screen_change(fn):
 class VisualResources:
     def __init__(self, game):
         self.game = game
-        self.vectors = {}
+        self.images = {}
+        self.textures = {}
         self.transitioning = False
         self.gif_until = 0
         self.gif_started = 0
@@ -34,23 +34,25 @@ class VisualResources:
         self.timings = []
         self.metrics = {'frames': 0, 'render_ms': [], 'update_ms': []}
 
-    def svg(self, filename, x, y, width, height, slot=None):
-        """Keep source curves/gradients on GPU; only update placement matrices."""
+    def png(self, filename, x, y, width, height, slot=None):
+        """Reuse PNG textures and draw instructions without changing screen placement."""
         cv = self.game.cv
         key = (filename, slot if slot is not None else (round(x), round(y), round(width), round(height)))
-        cached = self.vectors.get(key)
+        cached = self.images.get(key)
         if cached is None:
-            vector = Svg(asset('images', filename), bezier_points=48, circle_points=96)
+            image = self.textures.get(filename)
+            if image is None:
+                image = CoreImage(asset('images', filename), keep_data=False)
+                self.textures[filename] = image
             group = InstructionGroup()
-            group.add(PushMatrix())
-            move = Translate()
-            scale = Scale()
-            group.add(move); group.add(scale); group.add(vector); group.add(PopMatrix())
-            cached = (group, move, scale, vector.width, vector.height)
-            self.vectors[key] = cached
-        group, move, scale, vw, vh = cached
-        move.x, move.y = x, cv.height-y-height
-        scale.x, scale.y, scale.z = width/vw, height/vh, 1
+            group.add(Color(1, 1, 1, 1))
+            rectangle = Rectangle(texture=image.texture)
+            group.add(rectangle)
+            cached = (group, rectangle)
+            self.images[key] = cached
+        group, rectangle = cached
+        rectangle.pos = (x, cv.height-y-height)
+        rectangle.size = (width, height)
         cv.canvas.add(group)
 
     def show_goal(self, seconds=3):

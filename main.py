@@ -1353,7 +1353,7 @@ class Game(TournamentView):
     def button(self, cx, cy, w, h, text, cmd, bg="#ffd400", fg="#111111", font=None, team=None, flag=None):
         x0,y0,x1,y1=cx-w/2,cy-h/2,cx+w/2,cy+h/2
         kind='selected' if team and team==self.selected_country else ('card' if team else 'gold')
-        self.visual.svg(kind+'.svg',x0,y0,w,h,slot=('button',round(cx),round(cy)))
+        self.visual.png(kind+'.png',x0,y0,w,h,slot=('button',round(cx),round(cy)))
         tx=cx
         right=x1
         if team:
@@ -1398,7 +1398,7 @@ class Game(TournamentView):
                            font=("Helvetica", -int(R * 0.85), "bold"))
 
     def pitch_bg(self):
-        self.visual.svg('stadium.svg',0,0,self.cw,self.ch,slot='background')
+        self.visual.png('stadium.png',0,0,self.cw,self.ch,slot='background')
 
     def title(self, y, text, size=2.2, col="#ffd400"):
         self.cv.create_text(self.cw / 2 + 2, y + 2, text=text, fill="#000000", font=self.F(size),
@@ -1528,10 +1528,10 @@ class Game(TournamentView):
         bx0=rects[0][0]-u*1.1;bx1=rects[0][2]+u*1.1
         by0=rects[0][1]-u*4.2;by1=rects[1][3]+u*1.3
         cv.create_rectangle(0,0,cw,ch,fill='#021f22',width=0,alpha=.6)
-        self.visual.svg('panel.svg',bx0,by0,bx1-bx0,by1-by0,slot='pause')
+        self.visual.png('panel.png',bx0,by0,bx1-bx0,by1-by0,slot='pause')
         cv.create_text(cw/2,by0+u*2.2,text='PAUSA',fill='#ffd400',font=self.F(2))
         for x0,y0,x1,y1,txt,col,_ in rects:
-            self.visual.svg(('continue' if txt=='CONTINUAR' else 'restart')+'.svg',x0,y0,x1-x0,y1-y0,slot=txt)
+            self.visual.png(('continue' if txt=='CONTINUAR' else 'restart')+'.png',x0,y0,x1-x0,y1-y0,slot=txt)
             cv.create_text((x0+x1)/2,(y0+y1)/2,text=txt,fill='#082d29',font=self.F(1.2))
 
     # ---------------- torneo

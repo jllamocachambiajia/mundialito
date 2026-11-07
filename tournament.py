@@ -388,10 +388,10 @@ class TournamentView:
                 cv.create_oval(cx-2,cy-2,cx+2,cy+2,fill=WHITE,width=0)
             cup_y = y-r*(.1+1.75*lift)
             # The supplied token/arms emblem stays attached to the jersey disc.
-            self.visual.svg('brazos_ganador.svg',x-r*1.15,y-r*1.1-r*.25*lift,r*2.3,r*2.3,slot='champion-arms')
+            self.visual.png('brazos_ganador.png',x-r*1.15,y-r*1.1-r*.25*lift,r*2.3,r*2.3,slot='champion-arms')
             self.jersey(x,y,r*.77,self.user)
             cup_h=r*1.8
-            self.visual.svg('copa_render.svg',x-cup_h*130/300/2,cup_y-cup_h*.7,
+            self.visual.png('copa_render.png',x-cup_h*130/300/2,cup_y-cup_h*.7,
                             cup_h*130/300,cup_h,slot='champion-cup')
             cv.create_text(w/2,h*.78,text='¡CAMPEÓN DEL MUNDO!',fill=GOLD,font=self.F(1.7),width=w*.94)
         if hasattr(self,'visual'):self.visual.draw_goal()
