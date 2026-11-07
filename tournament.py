@@ -3,6 +3,8 @@ import math
 import os
 import random
 import wave
+from presentation import asset, screen_change
+from functools import lru_cache
 
 WHITE = '#ffffff'
 GOLD = '#ffd400'
@@ -32,6 +34,7 @@ def path_point(path, progress):
     return path[-1]
 
 
+@lru_cache(maxsize=8)
 def bracket_geometry(width, height):
     """Reorganiza filas, márgenes y columnas; nunca gira una imagen."""
     portrait = height > width
@@ -111,14 +114,17 @@ class TournamentView:
         self.bracket_camera = None
         self.bracket_done = False
         self.bracket_sound = None
+        self.bracket_audio_cache = {}
+        self.defeat_music = None
         self.bracket_orientation = 'vertical' if self.ch > self.cw else 'horizontal'
         self.bracket_clock = self.last_t
         self.advance_duration = audio_seconds(self.asset_path('avanzar_nivel.wav'), 10.031)
         self.defeat_duration = audio_seconds(self.asset_path('perder.wav'), 7.872)
 
     def asset_path(self, name):
-        return os.path.join(os.path.dirname(os.path.abspath(__file__)), name)
+        return asset('sounds','effects',name)
 
+    @screen_change
     def orient_bracket(self, mode):
         self.bracket_orientation = mode
         # Android: pedir orientación real a la actividad. PC: cambiar la ventana.
@@ -143,13 +149,16 @@ class TournamentView:
             from kivy.core.audio import SoundLoader
             if self.bracket_sound:
                 self.bracket_sound.stop()
-            self.bracket_sound = SoundLoader.load(self.asset_path(filename))
+            if filename not in self.bracket_audio_cache:
+                self.bracket_audio_cache[filename] = SoundLoader.load(self.asset_path(filename))
+            self.bracket_sound = self.bracket_audio_cache[filename]
             if self.bracket_sound:
                 self.bracket_sound.volume = .8
                 self.bracket_sound.play()
         except Exception:
             self.bracket_sound = None
 
+    @screen_change
     def finish_user_match(self, winner, text):
         if self.state not in ('post','match','pens'):
             return
@@ -195,8 +204,26 @@ class TournamentView:
         event['arrived'] = False
         event['duration'] = self.advance_duration
         self.bracket_event = event
-        if not event['losing']:
+        event['advance_audio'] = False
+        if not getattr(getattr(self,'visual',None),'transitioning',False):
+            self.start_bracket_audio()
+
+    def start_bracket_audio(self):
+        event=self.bracket_event
+        if event and not event['advance_audio']:
+            event['advance_audio']=True
+            event['elapsed']=0.0
             self.play_bracket_sound('avanzar_nivel.wav')
+
+    def start_defeat_music(self):
+        if not getattr(self.snd,'on',True):return
+        from kivy.core.audio import SoundLoader
+        if self.defeat_music is None:
+            self.defeat_music=SoundLoader.load(asset('sounds','music','derrota_musica.wav'))
+        if self.defeat_music:
+            self.defeat_music.volume=.24
+            self.defeat_music.play()
+
 
     def bracket_update(self, dt):
         self.fragment_age += max(0,dt)
@@ -211,6 +238,9 @@ class TournamentView:
         if e['losing']:
             zoom_start = e['duration']/2+2
             fall_start = zoom_start+2
+            if t >= zoom_start and not e.get('defeat_music_started'):
+                e['defeat_music_started']=True
+                self.start_defeat_music()
             if t >= fall_start and not e['sound_started']:
                 e['sound_started'] = True
                 self.music.stop()
@@ -220,11 +250,13 @@ class TournamentView:
             if t >= fall_start+self.defeat_duration+.25:
                 if self.bracket_sound: self.bracket_sound.stop()
                 self.bracket_event = None
+                if self.defeat_music:self.defeat_music.stop()
                 self.restart_tournament()
         elif e['champion']:
             if t >= e['duration'] and not e['sound_started']:
                 e['sound_started'] = True
                 self.snd.play('campeon',self.user,9)
+                if hasattr(self,'visual'):self.visual.show_goal(3)
             if t >= e['duration']+7:
                 self.bracket_done = True
                 self.bracket_event = None
@@ -235,7 +267,7 @@ class TournamentView:
     def draw_bracket(self):
         from main import ROUND_NAMES, SHORT, ABBR, kit_for, clip, CIRCLE
         cv, w, h = self.cv, self.cw, self.ch
-        cv.create_rectangle(0,0,w,h,fill=DARK,width=0)
+        self.pitch_bg()
         current = self.bracket_event
         special = self.bracket_done or (current and (
             (current['champion'] and current['elapsed'] >= current['duration']) or
@@ -283,7 +315,7 @@ class TournamentView:
                 dest = nodes[stage+1][i//2]
                 line = connection(point,dest)
                 for a,b in zip(line,line[1:]):
-                    cv.create_line(*screen(a),*screen(b),fill=WHITE,width=max(1,radius*.09))
+                    cv.create_line(*screen(a),*screen(b),fill=WHITE,width=max(3,radius*.24))
         for stage,row in enumerate(self.bracket_levels):
             for i,team in enumerate(row):
                 if special and camera_progress > .95:
@@ -307,19 +339,26 @@ class TournamentView:
                             flat = [v for px,py in poly for v in (x+(px+dx)*r,y+(py+dy)*r)]
                             cv.create_polygon(flat,fill=color,outline=DARK,width=1)
                         polygon(piece['poly'],base)
-                        # Recortar el patrón de camiseta dentro de cada fragmento.
-                        for shape,color in shapes:
-                            p = shape
-                            area = sum(a[0]*b[1]-b[0]*a[1] for a,b in zip(piece['poly'],piece['poly'][1:]+piece['poly'][:1]))
-                            sign = 1 if area>0 else -1
-                            for a,b in zip(piece['poly'],piece['poly'][1:]+piece['poly'][:1]):
-                                nx,ny = sign*(b[1]-a[1]),sign*(a[0]-b[0])
-                                p = clip(p,nx,ny,nx*a[0]+ny*a[1]) if p else []
-                            if len(p)>=3: polygon(p,color)
+                        # Cache intersections once, retaining every piece of uniform detail.
+                        if 'layers' not in piece:
+                            layers=[]
+                            area=sum(a[0]*b[1]-b[0]*a[1] for a,b in zip(piece['poly'],piece['poly'][1:]+piece['poly'][:1]))
+                            sign=1 if area>0 else -1
+                            for shape,color in shapes:
+                                poly=shape
+                                for a,b in zip(piece['poly'],piece['poly'][1:]+piece['poly'][:1]):
+                                    nx,ny=sign*(b[1]-a[1]),sign*(a[0]-b[0])
+                                    poly=clip(poly,nx,ny,nx*a[0]+ny*a[1]) if poly else []
+                                if len(poly)>=3:layers.append((poly,color))
+                            piece['layers']=layers
+                        for poly,color in piece['layers']:polygon(poly,color)
                     continue
-                hidden = e and stage==e['stage'] and i==e['src']
+                hidden = False  # Keep original at every previous round; only a visual copy moves.
                 if not hidden:
                     if team:
+                        if e and team==self.user and stage==e['stage'] and i==e['src'] and not e['losing']:
+                            hr=r*1.25
+                            cv.create_oval(x-hr,y-hr,x+hr,y+hr,outline=GOLD,width=max(2,r*.14))
                         self.jersey(x,y,r,team)
                     else:
                         cv.create_oval(x-r,y-r,x+r,y+r,fill=WHITE,outline=WHITE,width=1)
@@ -334,7 +373,9 @@ class TournamentView:
                 halo = r*(1.25+.16*math.sin(max(0,e['elapsed']-e['duration']/2)*math.tau))
                 if not e['losing']:
                     cv.create_oval(x-halo,y-halo,x+halo,y+halo,outline=GOLD,width=max(2,r*.14))
+                self._moving_token=True
                 self.jersey(x,y,r,e['team'])
+                self._moving_token=False
         champion = self.bracket_done or (e and e['champion'] and e['elapsed']>=e['duration'])
         if champion:
             x,y = screen(nodes[4][0])
@@ -346,13 +387,14 @@ class TournamentView:
                 cx,cy = x+math.cos(angle)*dist,y+math.sin(angle)*dist
                 cv.create_oval(cx-2,cy-2,cx+2,cy+2,fill=WHITE,width=0)
             cup_y = y-r*(.1+1.75*lift)
-            for side in (-1,1):
-                cv.create_line(x+side*r*.8,y,x+side*r*1.3,y-r*.4*lift,fill=WHITE,width=max(2,r*.13))
-                cv.create_line(x+side*r*1.3,y-r*.4*lift,x+side*r*.45,cup_y+r*.25,fill=WHITE,width=max(2,r*.13))
-            cv.create_polygon([x-r*.5,cup_y-r*.25,x+r*.5,cup_y-r*.25,x+r*.3,cup_y+r*.25,x-r*.3,cup_y+r*.25],fill=GOLD,width=0)
-            cv.create_line(x,cup_y+r*.2,x,cup_y+r*.55,fill=GOLD,width=max(2,r*.12))
-            cv.create_rectangle(x-r*.32,cup_y+r*.5,x+r*.32,cup_y+r*.65,fill=GOLD,width=0)
+            # The supplied token/arms emblem stays attached to the jersey disc.
+            self.visual.svg('brazos_ganador.svg',x-r*1.15,y-r*1.1-r*.25*lift,r*2.3,r*2.3,slot='champion-arms')
+            self.jersey(x,y,r*.77,self.user)
+            cup_h=r*1.8
+            self.visual.svg('copa_render.svg',x-cup_h*130/300/2,cup_y-cup_h*.7,
+                            cup_h*130/300,cup_h,slot='champion-cup')
             cv.create_text(w/2,h*.78,text='¡CAMPEÓN DEL MUNDO!',fill=GOLD,font=self.F(1.7),width=w*.94)
+        if hasattr(self,'visual'):self.visual.draw_goal()
         if fall_time is not None:
             darkness = min(1,fall_time/max(.1,self.defeat_duration-.25))
             cv.create_rectangle(0,0,w,h,fill='#000000',width=0,alpha=darkness)

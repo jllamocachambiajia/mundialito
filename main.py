@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-COPA MUNDIAL DE CHAPAS  v10 APK  -  Python 3 + Kivy (empaquetable como APK con Buildozer)
+COPA MUNDIAL DE CHAPAS  v11 APK  -  Python 3 + Kivy (empaquetable como APK con Buildozer)
 Funciona en PC y en Android (Pydroid 3). Se adapta a cualquier pantalla:
 en vertical la cancha se gira para aprovechar el espacio.
 
@@ -70,7 +70,7 @@ DASH_CHARGE = 0.5                                # s para llegar a potencia máx
 DASH_MIN, DASH_MAX = 22, 150                     # distancia del DASH (mundo)
 DASH_V_MIN, DASH_V_MAX = 8.0, 17.0               # velocidad del DASH (mundo / fotograma)
 # --- v9: música de fondo (ajusta estos valores a tu gusto)
-MUSIC_FILE = "musica_fondo.mp3"                  # debe estar en la misma carpeta que main.py
+MUSIC_FILE = "assets/sounds/music/musica_fondo.mp3"                  # debe estar en la misma carpeta que main.py
 MUSIC_VOL = 0.15                                 # volumen objetivo: 15 % del máximo del archivo
 MUSIC_PEN_VOL = 0.05                             # en penales baja (fade-out) hasta este nivel
 MUSIC_FADE_IN = 4.0                              # s del fade-in al empezar el partido
@@ -273,6 +273,24 @@ class _CanvasWidget(_Widget):
     def delete(self, what="all"):
         self.canvas.clear()
 
+    def cached(self, key, draw):
+        from kivy.graphics import Canvas
+        if not hasattr(self, '_groups'):
+            self._groups = {}
+        group = self._groups.get(key)
+        if group is None:
+            target = self.canvas
+            group = Canvas()
+            self.canvas = group
+            try:
+                draw()
+            finally:
+                self.canvas = target
+            if len(self._groups) > 160:
+                self._groups.clear()
+            self._groups[key] = group
+        self.canvas.add(group)
+
     def _Y(self, y):
         return self.height - y
 
@@ -385,8 +403,9 @@ class _CanvasWidget(_Widget):
         key = (text, size, bold, fill, wrap)
         tex = self.TEX.get(key)
         if tex is None:
-            if len(self.TEX) > 600:
-                self.TEX.clear()
+            if len(self.TEX) > 900:
+                for old in list(self.TEX)[:150]:
+                    self.TEX.pop(old, None)
             c = _rgb(fill) or (0, 0, 0)
             lab = _CoreLabel(text=str(text), font_size=size, bold=bold, color=(*c, 1),
                              halign="center", text_size=(wrap, None) if wrap else (None, None))
@@ -770,12 +789,12 @@ class Sound:
         self.busy_until, self.busy_prio = 0.0, -1
         self.players = []
         self.backend = self._detect()
-        try:
-            os.makedirs(SND_DIR, exist_ok=True)
-        except OSError:
-            self.backend = None
-        if self.backend:
-            self._bg(lambda: self.files.update({("", k): v for k, v in gen_common().items()}))
+        self.on_event = None
+        self.files.update({('', k): asset('sounds', 'effects', k+'.wav')
+                           for k in ('pito','pito_medio','pito_final','toque','uy','derrota')})
+        for team in TEAMS:
+            for kind in ('gol','penal','gana','campeon'):
+                self.files[(team,kind)] = asset('sounds','victory',ABBR[team]+'_'+kind+'.wav')
 
     def _detect(self):
         try:
@@ -816,14 +835,17 @@ class Sound:
         threading.Thread(target=run, daemon=True).start()
 
     def prepare(self, *teams):
-        if not self.backend:
-            return
-        for t in teams:
-            if ("", t) not in self.files:
-                self.files[("", t)] = True
-                self._bg(lambda t=t: self.files.update({(t, k): v for k, v in gen_team(t).items()}))
+        # Load a few clips before play; all 24 countries already ship as WAV assets.
+        if self.backend == 'kivy':
+            for team in teams:
+                for kind in ('gol','penal','gana','campeon'):
+                    path=self.files.get((team,kind))
+                    if path and path not in self.cache:
+                        self.cache[path]=self.SL.load(path)
 
     def play(self, name, team="", dur=1.0):
+        if self.on_event:
+            self.on_event(name, team)
         if not (self.on and self.backend):
             return
         path = self.files.get((team, name))
@@ -836,10 +858,6 @@ class Sound:
         self.busy_until, self.busy_prio = now + dur, prio
         try:
             if self.backend == "kivy":
-                if prio >= 3:
-                    for s in self.cache.values():
-                        if s and s.state == "play":
-                            s.stop()
                 s = self.cache.get(path)
                 if s is None:
                     s = self.SL.load(path)
@@ -1187,6 +1205,7 @@ def kit_for(team, keeper=False, side=0):
 
 # ------------------------------------------------------------------ juego
 from tournament import TournamentView
+from presentation import VisualResources, asset, screen_change
 
 
 class Game(TournamentView):
@@ -1241,6 +1260,9 @@ class Game(TournamentView):
         self.gen = 0                                   # cambia al reiniciar: anula esperas viejas
         self.music = Music(self.snd)
         self.last_t = vnow()
+        self.selected_country = None
+        self.visual = VisualResources(self)
+        self.snd.on_event = self.sound_visual_event
         self.render()
         self.tick()
 
@@ -1320,6 +1342,7 @@ class Game(TournamentView):
         {"menu": self.draw_menu, "bracket": self.draw_bracket, "post": self.draw_post,
          "end": self.draw_end}.get(self.state, self.draw)()
 
+    @screen_change
     def go(self, state):
         if state != self.state and "pens" in (state, self.state):
             self.state = state
@@ -1328,31 +1351,30 @@ class Game(TournamentView):
         self.render()
 
     def button(self, cx, cy, w, h, text, cmd, bg="#ffd400", fg="#111111", font=None, team=None, flag=None):
-        cv = self.cv
-        x0, y0, x1, y1 = cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2
-        sh = max(2, h * 0.08)
-        cv.create_rectangle(x0 + sh, y0 + sh, x1 + sh, y1 + sh, fill="#04301a", width=0)
-        cv.create_rectangle(x0, y0, x1, y1, fill=bg, outline="#ffffff", width=max(1, int(h * 0.05)))
-        tx = cx
+        x0,y0,x1,y1=cx-w/2,cy-h/2,cx+w/2,cy+h/2
+        kind='selected' if team and team==self.selected_country else ('card' if team else 'gold')
+        self.visual.svg(kind+'.svg',x0,y0,w,h,slot=('button',round(cx),round(cy)))
+        tx=cx
+        right=x1
         if team:
-            r = h * 0.3
-            jx = x0 + h * 0.5
-            right = x1
-            if flag:
-                r = min(h * 0.3, w * 0.12)
-                jx = x0 + r * 1.4
-                fw = min(h * 0.55, w * 0.18)
-                fh = fw * 0.66
-                right = x1 - fw - h * 0.1
-                self.draw_flag(right + h * 0.03, cy - fh / 2, fw, fh, flag)
-            self.jersey(jx, cy, r, team)
-            tx = (jx + r + right) / 2
-            x1 = right
-        cv.create_text(tx, cy, text=text, fill=fg, font=font or self.F(1.0), justify="center",
-                       width=max(10, (x1 - tx) * 2 - 8))
-        self.buttons.append((x0, y0, cx + w / 2, y1, cmd))
+            r=min(h*.29,w*.12);jx=x0+r*1.5
+            self.jersey(jx,cy,r,team)
+            fw=min(h*.58,w*.18);fh=fw*.66
+            right=x1-fw-h*.12
+            self.draw_flag(right+h*.04,cy-fh/2,fw,fh,flag or team)
+            tx=(jx+r+right)/2
+        self.cv.create_text(tx,cy,text=text,fill=fg,font=font or self.F(1),width=max(12,(right-tx)*2-8))
+        self.buttons.append((x0,y0,x1,y1,cmd))
 
     def jersey(self, sx, sy, R, team, keeper=False, side=0, num=None):
+        key=('jersey',round(sx,3),round(sy,3),round(R,3),team,keeper,side,num)
+        # Moving players are rendered normally; static menu/bracket tokens reuse vectors.
+        if self.state in ('menu','post','end','bracket') and not getattr(self, '_moving_token',False):
+            self.cv.cached(key,lambda:self._jersey(sx,sy,R,team,keeper,side,num))
+        else:
+            self._jersey(sx,sy,R,team,keeper,side,num)
+
+    def _jersey(self, sx, sy, R, team, keeper=False, side=0, num=None):
         base, shapes, edge = kit_for(team, keeper, side)
         cv = self.cv
         cv.create_oval(sx - R + R * 0.15, sy - R + R * 0.25, sx + R + R * 0.15, sy + R + R * 0.25,
@@ -1376,11 +1398,7 @@ class Game(TournamentView):
                            font=("Helvetica", -int(R * 0.85), "bold"))
 
     def pitch_bg(self):
-        """Fondo decorativo con franjas para los menús."""
-        n = 12
-        for i in range(n):
-            self.cv.create_rectangle(0, i * self.ch / n, self.cw, (i + 1) * self.ch / n,
-                                     fill="#0c6b31" if i % 2 else "#0a5a2a", width=0)
+        self.visual.svg('stadium.svg',0,0,self.cw,self.ch,slot='background')
 
     def title(self, y, text, size=2.2, col="#ffd400"):
         self.cv.create_text(self.cw / 2 + 2, y + 2, text=text, fill="#000000", font=self.F(size),
@@ -1392,7 +1410,7 @@ class Game(TournamentView):
     def draw_menu(self):
         cw, ch, u = self.cw, self.ch, self.u
         self.pitch_bg()
-        self.title(u * 2.2, "COPA MUNDIAL DE CHAPAS", 2.1)
+        self.title(u * 2.2, "MUNDIALITO", 2.4)
         self.cv.create_text(cw / 2, u * 4.4, text="Elige tu selección", fill="#ffffff", font=self.F(1.2))
         cols = 3 if cw < ch else 4
         rows = math.ceil(len(TEAMS) / cols)
@@ -1407,16 +1425,25 @@ class Game(TournamentView):
             y = y0 + (i // cols) * (bh + gap) + bh / 2
             sn = SHORT[n]
             fs = min(0.95, bh / u * 0.3, bw * 0.52 / (u * 0.62 * max(6, len(sn))))
-            self.button(x, y, bw, bh, f"{sn}\n{rating(n)}", lambda n=n: self.start_tournament(n),
+            self.button(x, y, bw, bh, f"{sn}\n{ABBR[n]}", lambda n=n: self.select_country(n),
                         bg="#123d24", fg="#ffffff", font=self.F(fs), team=n, flag=n)
-        self.button(cw / 2, ch - u * 3.5, min(cw * 0.6, u * 11), u * 1.6,
-                    "Sonido: SÍ" if self.snd.on else "Sonido: NO", self.toggle_sound,
-                    bg="#ffd400" if self.snd.on else "#555555", fg="#111111" if self.snd.on else "#ffffff",
-                    font=self.F(0.85))
-        self.cv.create_text(cw / 2, ch - u * 1.6, fill="#d9ffe6", font=self.F(0.8, False),
-                            justify="center", width=cw * 0.94,
-                            text="Arrastra desde tu ficha hacia donde quieras tirar: más estiras, más potencia.\n"
-                                 "Juego libre con recarga de 1 s por equipo. Arrastra al arquero: cámara lenta 50 % hasta que bloquee.")
+        self.button(cw*.27,ch-u*3,min(cw*.42,u*12),u*2.2,
+                    "SONIDO: SÍ" if self.snd.on else "SONIDO: NO",self.toggle_sound,font=self.F(.8))
+        self.button(cw*.73,ch-u*3,min(cw*.42,u*12),u*2.2,"CONFIRMAR",
+                    lambda:self.start_tournament(self.selected_country) if self.selected_country else None,
+                    font=self.F(.8))
+
+    def select_country(self, country):
+        self.selected_country = country
+        self.render()
+        from kivy.animation import Animation
+        Animation.cancel_all(self.cv,'opacity')
+        self.cv.opacity=.82
+        Animation(opacity=1,duration=.18,t='out_quad').start(self.cv)
+
+    def sound_visual_event(self, name, team):
+        if name == 'gol' and team == getattr(self,'user',None):
+            self.visual.show_goal(3)
 
     def toggle_sound(self):
         self.snd.on = not self.snd.on
@@ -1455,6 +1482,7 @@ class Game(TournamentView):
         self.last_t = vnow()
         self.draw()
 
+    @screen_change
     def restart_tournament(self):
         self.paused = False
         clock_pause(False)
@@ -1463,6 +1491,11 @@ class Game(TournamentView):
         self.pen_hold = 0
         self.gk_mode = False
         self.music.stop()
+        self.visual.gif_until = 0
+        if getattr(self, 'defeat_music', None):
+            self.defeat_music.stop()
+        if hasattr(self, 'bracket_event'):
+            self.bracket_event = None
         if getattr(self, "bracket_sound", None):
             self.bracket_sound.stop()
         self.go("menu")
@@ -1490,19 +1523,19 @@ class Game(TournamentView):
                                     fill="#111111", width=0)
 
     def draw_pause_overlay(self):
-        cv, cw, ch, u = self.cv, self.cw, self.ch, self.u
-        rects = self.pause_menu_rects()
-        bx0 = rects[0][0] - u * 1.5
-        bx1 = rects[0][2] + u * 1.5
-        by0 = rects[0][1] - u * 5
-        by1 = rects[1][3] + u * 1.5
-        cv.create_rectangle(bx0, by0, bx1, by1, fill="#0b3d1f", outline="#ffd400", width=3)
-        cv.create_text(cw / 2, by0 + u * 2.4, text="PAUSA", fill="#ffd400", font=self.F(2.0))
-        for x0, y0, x1, y1, txt, col, _ in rects:
-            cv.create_rectangle(x0, y0, x1, y1, fill=col, outline="#ffffff", width=2)
-            cv.create_text((x0 + x1) / 2, (y0 + y1) / 2, text=txt, fill="#111111", font=self.F(1.2))
+        cv,cw,ch,u=self.cv,self.cw,self.ch,self.u
+        rects=self.pause_menu_rects()
+        bx0=rects[0][0]-u*1.1;bx1=rects[0][2]+u*1.1
+        by0=rects[0][1]-u*4.2;by1=rects[1][3]+u*1.3
+        cv.create_rectangle(0,0,cw,ch,fill='#021f22',width=0,alpha=.6)
+        self.visual.svg('panel.svg',bx0,by0,bx1-bx0,by1-by0,slot='pause')
+        cv.create_text(cw/2,by0+u*2.2,text='PAUSA',fill='#ffd400',font=self.F(2))
+        for x0,y0,x1,y1,txt,col,_ in rects:
+            self.visual.svg(('continue' if txt=='CONTINUAR' else 'restart')+'.svg',x0,y0,x1-x0,y1-y0,slot=txt)
+            cv.create_text((x0+x1)/2,(y0+y1)/2,text=txt,fill='#082d29',font=self.F(1.2))
 
     # ---------------- torneo
+    @screen_change
     def start_tournament(self, team):
         self.user = team
         self.snd.prepare(team)                         # se genera en segundo plano
@@ -1556,6 +1589,7 @@ class Game(TournamentView):
                     lambda: self.go("menu"), font=self.F(1.2))
 
     # ---------------- partido
+    @screen_change
     def start_match(self, opp):
         self.teams = [self.user, opp]
         self.snd.prepare(self.user, opp)
@@ -1898,6 +1932,7 @@ class Game(TournamentView):
         if self.can_shoot(1, now, True) and now >= self.ai_gk_at:   # IA del arquero, independiente
             self.ai_keeper()
 
+    @screen_change
     def match_over(self, pen_text=""):
         a, b = self.teams
         if pen_text:
@@ -1909,7 +1944,8 @@ class Game(TournamentView):
         self.paused = False
         clock_pause(False)
         self.music.fade_out_end()
-        self.finish_user_match(w, self.post_txt)
+        self.go('post')
+        self.later(1100, lambda: self.state == 'post' and self.snd.play('gana', w, 4))
         if False and not pen_text:                               # tras el pitazo, festeja el ganador
             self.later(1500, lambda: self.state == "post" and self.snd.play("gana", w, 4))
 
@@ -1930,6 +1966,7 @@ class Game(TournamentView):
                     lambda: self.finish_user_match(self.post_w, self.post_txt), font=self.F(1.3))
 
     # ---------------- penales
+    @screen_change
     def start_penalties(self):
         self.pens = [[], []]
         self.pen_k = 0
@@ -2372,6 +2409,8 @@ class Game(TournamentView):
 
     # ---------------- entrada (ratón / táctil)
     def on_press(self, ev):
+        if self.visual.transitioning:
+            return
         if self.state not in ("match", "pens"):
             for x0, y0, x1, y1, cmd in list(self.buttons):
                 if x0 <= ev.x <= x1 and y0 <= ev.y <= y1:
@@ -2434,12 +2473,14 @@ class Game(TournamentView):
         return dx / d, dy / d, pw
 
     def on_motion(self, ev):
+        if self.visual.transitioning: return
         if self.paused:
             return
         if self.state in ("match", "pens"):
             self.mouse_w = self.to_w(ev.x, ev.y)
 
     def on_release(self, ev):
+        if self.visual.transitioning: return
         self.pen_hold = 0
         if self.paused:
             return
@@ -2473,56 +2514,27 @@ class Game(TournamentView):
 
     # ---------------- bucle
     def tick(self):
-        now = vnow()
-        dt = min(0.1, now - self.last_t)
-        self.last_t = now
-        if self.paused:
-            pass                                       # v9: todo congelado (reloj de juego parado)
-        elif self.state == "match":
-            self.match_update(dt)
-        elif self.state == "pens":
-            self.pens_update()
-        elif self.state == "bracket":
-            self.bracket_update(dt)
-        if not self.paused:
+        stamp=time.perf_counter()
+        now=vnow();dt=min(.1,max(0,now-self.last_t));self.last_t=now
+        active=not self.paused and not self.visual.transitioning
+        if active:
+            if self.state=='match':self.match_update(dt)
+            elif self.state=='pens':self.pens_update()
+            elif self.state=='bracket':self.bracket_update(dt)
             self.music.update(dt)
-        if self.state in ("match", "pens"):
-            self.draw()
-        elif self.state == "bracket":
-            self.render()
-        self.root.after(16, self.tick)
+        updated=time.perf_counter()
+        # No redraw of frozen pause/static screens. Kivy animates opacity on its own.
+        if active:
+            if self.state in ('match','pens'):self.draw()
+            elif self.state=='bracket' and self.bracket_event:self.render()
+        self.visual.record(updated-stamp,time.perf_counter()-updated)
+        self.root.after(16,self.tick)
 
     # ---------------- dibujo de partido
     def draw(self):
         cv = self.cv
         cv.delete("all")
-        cv.create_rectangle(0, 0, self.cw, self.ch, fill="#08401f", width=0)
-        stripe = (FX1 - FX0) / 10
-        for i in range(10):
-            self.rect_w(FX0 + i * stripe, FY0, FX0 + (i + 1) * stripe, FY1,
-                        fill="#2fae4f" if i % 2 else "#3cc45e", width=0)
-        lw = max(1.5, 3 * self.s)
-        L = dict(fill="", outline="#ffffff", width=lw)
-        self.rect_w(FX0, FY0, FX1, FY1, **L)
-        cx = (FX0 + FX1) / 2
-        self.line_w(cx, FY0, cx, FY1, fill="#ffffff", width=lw)
-        self.circle_w(cx, MY, 80, **L)
-        self.circle_w(cx, MY, 4, fill="#ffffff", width=0)
-        for side in (-1, 1):
-            line = FX0 if side < 0 else FX1
-            self.rect_w(line, MY - 150, line - side * 150, MY + 150, **L)
-            self.rect_w(line, MY - 70, line - side * 55, MY + 70, **L)
-            self.circle_w(line - side * 105, MY, 3, fill="#ffffff", width=0)
-            back = line + side * GD
-            self.rect_w(line, GY0, back, GY1, fill="#e8e8e8", outline="#ffffff", width=lw)
-            for k in range(1, 7):                                   # red
-                yy = GY0 + k * GOAL_H / 7
-                self.line_w(line, yy, back, yy, fill="#9a9a9a", width=1)
-            for k in range(1, 4):
-                xx = line + side * GD * k / 4
-                self.line_w(xx, GY0, xx, GY1, fill="#9a9a9a", width=1)
-            self.circle_w(line, GY0, 4, fill="#ffffff", width=0)
-            self.circle_w(line, GY1, 4, fill="#ffffff", width=0)
+        cv.cached(('pitch',self.cw,self.ch,self.state),self.draw_pitch)
 
         self.draw_trail()                               # v7: estela del DASH
         # resaltar fichas del equipo con turno
@@ -2588,8 +2600,40 @@ class Game(TournamentView):
                            justify="center")
             cv.create_text(fx, fy, text=self.msg, fill="#ffd400", font=f, width=self.cw * 0.9,
                            justify="center")
+        self.visual.draw_goal()
         if self.paused:
             self.draw_pause_overlay()
+
+    def draw_pitch(self):
+        cv=self.cv
+        cv.create_rectangle(0, 0, self.cw, self.ch, fill="#08401f", width=0)
+        stripe = (FX1 - FX0) / 10
+        for i in range(10):
+            self.rect_w(FX0 + i * stripe, FY0, FX0 + (i + 1) * stripe, FY1,
+                        fill="#2fae4f" if i % 2 else "#3cc45e", width=0)
+        lw = max(1.5, 3 * self.s)
+        L = dict(fill="", outline="#ffffff", width=lw)
+        self.rect_w(FX0, FY0, FX1, FY1, **L)
+        cx = (FX0 + FX1) / 2
+        self.line_w(cx, FY0, cx, FY1, fill="#ffffff", width=lw)
+        self.circle_w(cx, MY, 80, **L)
+        self.circle_w(cx, MY, 4, fill="#ffffff", width=0)
+        for side in (-1, 1):
+            line = FX0 if side < 0 else FX1
+            self.rect_w(line, MY - 150, line - side * 150, MY + 150, **L)
+            self.rect_w(line, MY - 70, line - side * 55, MY + 70, **L)
+            self.circle_w(line - side * 105, MY, 3, fill="#ffffff", width=0)
+            back = line + side * GD
+            self.rect_w(line, GY0, back, GY1, fill="#e8e8e8", outline="#ffffff", width=lw)
+            for k in range(1, 7):                                   # red
+                yy = GY0 + k * GOAL_H / 7
+                self.line_w(line, yy, back, yy, fill="#9a9a9a", width=1)
+            for k in range(1, 4):
+                xx = line + side * GD * k / 4
+                self.line_w(xx, GY0, xx, GY1, fill="#9a9a9a", width=1)
+            self.circle_w(line, GY0, 4, fill="#ffffff", width=0)
+            self.circle_w(line, GY1, 4, fill="#ffffff", width=0)
+
 
     def draw_pens_overlay(self):
         cv, u = self.cv, self.u
@@ -2700,7 +2744,7 @@ class Game(TournamentView):
 
 
 class MundialApp(_App):
-    title = "Copa Mundial de Chapas"
+    title = "Mundialito"
 
     def build(self):
         root = tk.Tk()

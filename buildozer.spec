@@ -1,17 +1,18 @@
 [app]
-title = Copa Mundial de Chapas
-package.name = mundialchapa
+title = Mundialito
+package.name = mundialchapas
 package.domain = org.jose
 source.dir = .
-source.include_exts = py,png,jpg,kv,atlas,ttf,wav,ogg
-version = 0.1
-requirements = python3,kivy
-orientation = portrait
+source.include_exts = py,mp3,wav,svg,gif,json,txt,md
+source.exclude_dirs = .github, bin, .buildozer, tests
+version = 11.0
+requirements = python3,kivy==2.3.1,pillow
+orientation = portrait, landscape, portrait-reverse, landscape-reverse
 fullscreen = 1
 
 android.api = 34
 android.minapi = 21
-android.archs = arm64-v8a
+android.archs = arm64-v8a, armeabi-v7a
 android.accept_sdk_license = True
 android.allow_backup = True
 
