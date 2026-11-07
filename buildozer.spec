@@ -3,7 +3,7 @@ title = Mundialito
 package.name = mundialchapas
 package.domain = org.jose
 source.dir = .
-source.include_exts = py,mp3,wav,svg,gif,json,txt,md
+source.include_exts = py,mp3,wav,svg,gif,json,txt,md,ogg
 source.exclude_dirs = .github, bin, .buildozer, tests
 version = 11.0
 requirements = python3,kivy==2.3.1,pillow
