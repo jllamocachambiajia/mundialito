@@ -1,0 +1,170 @@
+{
+  "España": {
+    "abbreviation": "ESP",
+    "tempo": 132,
+    "instrument": "trumpet",
+    "rhythm": "pasodoble",
+    "victory": "ESP_gana.wav"
+  },
+  "Francia": {
+    "abbreviation": "FRA",
+    "tempo": 112,
+    "instrument": "brass",
+    "rhythm": "march",
+    "victory": "FRA_gana.wav"
+  },
+  "Alemania": {
+    "abbreviation": "ALE",
+    "tempo": 104,
+    "instrument": "brass",
+    "rhythm": "stomp",
+    "victory": "ALE_gana.wav"
+  },
+  "Inglaterra": {
+    "abbreviation": "ING",
+    "tempo": 96,
+    "instrument": "organ",
+    "rhythm": "stomp",
+    "victory": "ING_gana.wav"
+  },
+  "Italia": {
+    "abbreviation": "ITA",
+    "tempo": 120,
+    "instrument": "accordion",
+    "rhythm": "march",
+    "victory": "ITA_gana.wav"
+  },
+  "Portugal": {
+    "abbreviation": "POR",
+    "tempo": 118,
+    "instrument": "guitar",
+    "rhythm": "clap",
+    "victory": "POR_gana.wav"
+  },
+  "Países Bajos": {
+    "abbreviation": "PBA",
+    "tempo": 128,
+    "instrument": "organ",
+    "rhythm": "oompah",
+    "victory": "PBA_gana.wav"
+  },
+  "Bélgica": {
+    "abbreviation": "BEL",
+    "tempo": 122,
+    "instrument": "brass",
+    "rhythm": "oompah",
+    "victory": "BEL_gana.wav"
+  },
+  "Croacia": {
+    "abbreviation": "CRO",
+    "tempo": 100,
+    "instrument": "voice",
+    "rhythm": "stomp",
+    "victory": "CRO_gana.wav"
+  },
+  "Argentina": {
+    "abbreviation": "ARG",
+    "tempo": 138,
+    "instrument": "voice",
+    "rhythm": "bombo",
+    "victory": "ARG_gana.wav"
+  },
+  "Brasil": {
+    "abbreviation": "BRA",
+    "tempo": 150,
+    "instrument": "whistle",
+    "rhythm": "samba",
+    "victory": "BRA_gana.wav"
+  },
+  "Uruguay": {
+    "abbreviation": "URU",
+    "tempo": 116,
+    "instrument": "voice",
+    "rhythm": "candombe",
+    "victory": "URU_gana.wav"
+  },
+  "Colombia": {
+    "abbreviation": "COL",
+    "tempo": 126,
+    "instrument": "accordion",
+    "rhythm": "cumbia",
+    "victory": "COL_gana.wav"
+  },
+  "México": {
+    "abbreviation": "MEX",
+    "tempo": 110,
+    "instrument": "mariachi",
+    "rhythm": "huapango",
+    "victory": "MEX_gana.wav"
+  },
+  "Estados Unidos": {
+    "abbreviation": "USA",
+    "tempo": 118,
+    "instrument": "synth",
+    "rhythm": "rock",
+    "victory": "USA_gana.wav"
+  },
+  "Chile": {
+    "abbreviation": "CHI",
+    "tempo": 124,
+    "instrument": "voice",
+    "rhythm": "clap",
+    "victory": "CHI_gana.wav"
+  },
+  "Suecia": {
+    "abbreviation": "SUE",
+    "tempo": 108,
+    "instrument": "alphorn",
+    "rhythm": "march",
+    "victory": "SUE_gana.wav"
+  },
+  "Dinamarca": {
+    "abbreviation": "DIN",
+    "tempo": 126,
+    "instrument": "organ",
+    "rhythm": "clap",
+    "victory": "DIN_gana.wav"
+  },
+  "Suiza": {
+    "abbreviation": "SUI",
+    "tempo": 96,
+    "instrument": "alphorn",
+    "rhythm": "waltz",
+    "victory": "SUI_gana.wav"
+  },
+  "Polonia": {
+    "abbreviation": "POL",
+    "tempo": 134,
+    "instrument": "accordion",
+    "rhythm": "polka",
+    "victory": "POL_gana.wav"
+  },
+  "Hungría": {
+    "abbreviation": "HUN",
+    "tempo": 112,
+    "instrument": "violin",
+    "rhythm": "clap",
+    "victory": "HUN_gana.wav"
+  },
+  "Paraguay": {
+    "abbreviation": "PAR",
+    "tempo": 120,
+    "instrument": "harp",
+    "rhythm": "galopa",
+    "victory": "PAR_gana.wav"
+  },
+  "Perú": {
+    "abbreviation": "PER",
+    "tempo": 114,
+    "instrument": "flute",
+    "rhythm": "huayno",
+    "victory": "PER_gana.wav"
+  },
+  "Ecuador": {
+    "abbreviation": "ECU",
+    "tempo": 124,
+    "instrument": "marimba",
+    "rhythm": "bomba",
+    "victory": "ECU_gana.wav"
+  }
+}
