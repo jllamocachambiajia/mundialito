@@ -70,7 +70,7 @@ DASH_CHARGE = 0.5                                # s para llegar a potencia máx
 DASH_MIN, DASH_MAX = 22, 150                     # distancia del DASH (mundo)
 DASH_V_MIN, DASH_V_MAX = 8.0, 17.0               # velocidad del DASH (mundo / fotograma)
 # --- v9: música de fondo (ajusta estos valores a tu gusto)
-MUSIC_FILE = "assets/sounds/music/musica_fondo.mp3"                  # debe estar en la misma carpeta que main.py
+MUSIC_FILE = "assets/sounds/music/musica_fondo.ogg"                  # debe estar en la misma carpeta que main.py
 MUSIC_VOL = 0.15                                 # volumen objetivo: 15 % del máximo del archivo
 MUSIC_PEN_VOL = 0.05                             # en penales baja (fade-out) hasta este nivel
 MUSIC_FADE_IN = 4.0                              # s del fade-in al empezar el partido
