@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-COPA MUNDIAL DE CHAPAS  v9 APK  -  Python 3 + Kivy (empaquetable como APK con Buildozer)
+COPA MUNDIAL DE CHAPAS  v10 APK  -  Python 3 + Kivy (empaquetable como APK con Buildozer)
 Funciona en PC y en Android (Pydroid 3). Se adapta a cualquier pantalla:
 en vertical la cancha se gira para aprovechar el espacio.
 
@@ -192,6 +192,7 @@ GK_KIT = {
 # sin archivos externos ni derechos de autor. Melodías inventadas para este juego.
 import os
 import sys
+sys.modules.setdefault("main", sys.modules[__name__])
 import wave
 import array
 import tempfile
@@ -1185,7 +1186,10 @@ def kit_for(team, keeper=False, side=0):
 
 
 # ------------------------------------------------------------------ juego
-class Game:
+from tournament import TournamentView
+
+
+class Game(TournamentView):
     def __init__(self, root):
         self.root = root
         root.title("Copa Mundial de Chapas")
@@ -1459,6 +1463,8 @@ class Game:
         self.pen_hold = 0
         self.gk_mode = False
         self.music.stop()
+        if getattr(self, "bracket_sound", None):
+            self.bracket_sound.stop()
         self.go("menu")
 
     def pause_menu_rects(self):
@@ -1507,6 +1513,7 @@ class Game:
         random.shuffle(self.round_teams)
         self.round = 0
         self.results = []
+        self.init_bracket()
         self.go("bracket")
 
     def pairs(self):
@@ -1526,46 +1533,6 @@ class Game:
         else:
             w = a if ga > gb else b
         return w, txt
-
-    def draw_bracket(self):
-        cw, ch, u = self.cw, self.ch, self.u
-        self.pitch_bg()
-        self.title(u * 2, ROUND_NAMES[self.round], 2.2)
-        lines = []
-        for r, res in enumerate(self.results):
-            lines.append((ROUND_NAMES[r], "#9fffd0", True))
-            lines += [(l, "#ffffff", False) for l in res]
-        lines.append(("Partidos de esta ronda", "#9fffd0", True))
-        for a, b in self.pairs():
-            lines.append((f"{a}  vs  {b}", "#ffd400" if self.user in (a, b) else "#ffffff", True))
-        top, bottom = u * 4, ch - u * 4.5
-        lh = min(u * 1.5, (bottom - top) / max(1, len(lines)))
-        y = top + lh / 2
-        for text, col, bold in lines:
-            self.cv.create_text(cw / 2, y, text=text, fill=col, width=cw * 0.95,
-                                font=("Helvetica", -max(7, int(lh * 0.72)), "bold" if bold else "normal"))
-            y += lh
-        opp = next(b if a == self.user else a for a, b in self.pairs() if self.user in (a, b))
-        self.button(cw / 2, ch - u * 2.3, min(cw * 0.8, u * 16), u * 2.8, "JUGAR PARTIDO",
-                    lambda: self.start_match(opp), font=self.F(1.3))
-
-    def finish_user_match(self, winner, text):
-        res, winners = [], []
-        for a, b in self.pairs():
-            if self.user in (a, b):
-                res.append("* " + text); winners.append(winner)
-            else:
-                w, t = self.sim_match(a, b)
-                res.append(t); winners.append(w)
-        self.results.append(res)
-        if winner != self.user:
-            return self.end_screen(f"Eliminado en {ROUND_NAMES[self.round]}", "#ff6b6b")
-        if self.round == 3:
-            self.snd.play("campeon", self.user, 9)
-            return self.end_screen(f"¡{self.user} CAMPEÓN DEL MUNDO!", "#ffd400")
-        self.round += 1
-        self.round_teams = winners
-        self.go("bracket")
 
     def end_screen(self, msg, col):
         self.end_msg, self.end_col = msg, col
@@ -1942,8 +1909,8 @@ class Game:
         self.paused = False
         clock_pause(False)
         self.music.fade_out_end()
-        self.go("post")
-        if not pen_text:                               # tras el pitazo, festeja el ganador
+        self.finish_user_match(w, self.post_txt)
+        if False and not pen_text:                               # tras el pitazo, festeja el ganador
             self.later(1500, lambda: self.state == "post" and self.snd.play("gana", w, 4))
 
     def draw_post(self):
@@ -2515,10 +2482,14 @@ class Game:
             self.match_update(dt)
         elif self.state == "pens":
             self.pens_update()
+        elif self.state == "bracket":
+            self.bracket_update(dt)
         if not self.paused:
             self.music.update(dt)
         if self.state in ("match", "pens"):
             self.draw()
+        elif self.state == "bracket":
+            self.render()
         self.root.after(16, self.tick)
 
     # ---------------- dibujo de partido
