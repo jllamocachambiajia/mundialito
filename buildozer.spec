@@ -8,7 +8,7 @@ source.exclude_dirs = .github, bin, .buildozer, tests
 version = 11.0
 
 # Incluido pyjnius ya que el código hace 'from jnius import autoclass'
-requirements = python3,kivy==2.3.1,pillow,sdl2_mixer,sdl2_image,pyjnius
+requirements = python3==3.10.11,kivy,pillow,sdl2_mixer,sdl2_image,pyjnius,requests,certifi,chardet,filetype,idna,urllib3,six
 
 orientation = portrait, landscape, portrait-reverse, landscape-reverse
 fullscreen = 1
