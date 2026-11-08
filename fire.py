@@ -5,6 +5,8 @@ PLAYER_RECHARGE = 20.0
 AI_RECHARGE = (20.0, 20.0, 10.0, 5.0)
 POWER_FACTOR = 1.5
 TIME_FACTOR = .5
+MAX_DURATION = 2.0
+ANDROID_SAFE_BOTTOM_DP = 56
 
 
 class FireState:
@@ -15,7 +17,10 @@ class FireState:
         self.recovery = 1.0
 
     def available(self, team, now):
-        return now >= self.ready_at[team] and not self.armed[team] and team not in self.shots
+        return now >= self.ready_at[team] and not self.armed[team] and not self.shots
+
+    def executing(self):
+        return any(s['phase'] in ('launch', 'flight') for s in self.shots.values())
 
     def arm(self, team, now):
         if not self.available(team, now):
@@ -25,7 +30,7 @@ class FireState:
 
     def select(self, body, now):
         team = body.team
-        if body.keeper or not self.armed[team]:
+        if body.keeper or not self.armed[team] or self.executing():
             return False
         old = self.shots.get(team)
         if old and old['phase'] != 'aim':
@@ -40,31 +45,38 @@ class FireState:
 
     def launch(self, body, vx, vy, now, stage):
         shot = self.selected(body)
-        if not shot or shot['phase'] != 'aim' or body.keeper:
+        if not shot or shot['phase'] != 'aim' or body.keeper or self.executing():
             return False
         team = body.team
+        # One ball, one special shot: discard any other team's pre-armed aim.
+        self.shots = {team: shot}
         shot.update(phase='launch', origin=body.x, started=now, velocity=(vx, vy))
-        self.armed[team] = False
+        self.armed = [False, False]
         self.ready_at[team] = now + (PLAYER_RECHARGE if team == 0 else AI_RECHARGE[stage])
         return True
 
-    def finish(self, team):
-        if team in self.shots:
-            del self.shots[team]
-            self.recovery = TIME_FACTOR
-
-    def clear(self):
-        if self.shots:
-            self.recovery = TIME_FACTOR
+    def finish(self, team=None):
+        """The only exit for BOTH teams; never change ball position or velocity."""
         self.shots.clear()
         self.armed = [False, False]
+        self.recovery = 1.0
+
+    def expire(self, now):
+        if any(s['phase'] != 'aim' and now - s['started'] >= MAX_DURATION
+               for s in self.shots.values()):
+            self.finish()
+            return True
+        return False
+
+    def clear(self):
+        self.finish()
 
     def scale(self, dt):
         if self.shots:
             self.recovery = TIME_FACTOR
             return TIME_FACTOR
-        self.recovery = min(1.0, self.recovery + max(0, dt) * .75)
-        return self.recovery
+        self.recovery = 1.0
+        return 1.0
 
     @staticmethod
     def keeper_blocks(shot, keeper, middle):
@@ -84,9 +96,9 @@ class FireAbility:
 
     def fire_rect(self):
         # Four stable slots; visible diameter is twice the player disc diameter.
-        diameter = min(self.cw / 5.0, max(44, 72 * self.s))
+        diameter = min(self.cw / 5.0, self.ctrl_pad-10, max(44, 72 * self.s))
         cx = self.cw / 8
-        cy = self.ch - self.ctrl_pad / 2
+        cy = self.ch - getattr(self, 'safe_bottom', 0) - self.ctrl_pad / 2
         return cx-diameter/2, cy-diameter/2, cx+diameter/2, cy+diameter/2
 
     def fire_press(self, x, y):
@@ -113,27 +125,27 @@ class FireAbility:
     def fire_collision(self, a, b):
         """Optional substep policy. Normal pairs always keep the original collide()."""
         from main import collide, FX0, FX1, MAX_DRAG, POWER, vnow
+        self.fire.expire(vnow())
         ball = self.ball
         other = b if a is ball else a if b is ball else None
         if other is None:
             return True
         flight = next(((team, shot) for team, shot in self.fire.shots.items()
-                       if shot['phase'] == 'flight'), None)
+                       if shot['phase'] in ('launch', 'flight')), None)
         if flight:
             team, shot = flight
-            # A second team's special launch may take ownership of the same ball.
-            incoming = self.fire.selected(other)
-            if incoming and incoming['phase'] == 'launch' and 0 < math.hypot(ball.x-other.x,ball.y-other.y) < ball.r+other.r:
-                self.fire.finish(team)
-                return self.fire_collision(a,b)
-            if self.fire.keeper_blocks(shot, other, (FX0+FX1)/2):
-                distance = math.hypot(ball.x-other.x, ball.y-other.y)
-                approach = (ball.vx-other.vx)*(other.x-ball.x)+(ball.vy-other.vy)*(other.y-ball.y)
-                if distance <= ball.r+other.r and approach > 0:
-                    self.fire.finish(team)
-                    self.fire_block = True
-                return True
-            return False
+            # The firing disc alone may transfer its impulse to the ball.
+            if shot['phase'] == 'launch' and other is shot['body']:
+                flight = None
+            else:
+                if self.fire.keeper_blocks(shot, other, (FX0+FX1)/2):
+                    distance = math.hypot(ball.x-other.x, ball.y-other.y)
+                    approach = (ball.vx-other.vx)*(other.x-ball.x)+(ball.vy-other.vy)*(other.y-ball.y)
+                    if distance <= ball.r+other.r and approach > 0:
+                        self.fire.finish()
+                        self.fire_block = True
+                    return True
+                return False
         for team, shot in list(self.fire.shots.items()):
             if shot['phase'] != 'launch' or shot['body'] is not other:
                 continue
@@ -154,13 +166,9 @@ class FireAbility:
         return True
 
     def fire_update(self, dt):
+        from main import vnow
+        self.fire.expire(vnow())
         self.fire_time += dt * (.5 if self.fire.shots else 1)
-        for team, shot in list(self.fire.shots.items()):
-            # A stopped/failed shot must not strand the match in slow motion.
-            if shot['phase'] == 'launch' and shot['body'].speed() == 0:
-                self.fire.finish(team)
-            elif shot['phase'] == 'flight' and self.ball.speed() == 0:
-                self.fire.finish(team)
         if self.fire_block:
             self.fire_block = False
             self.gk_mode = False
@@ -207,7 +215,7 @@ class FireAbility:
         from main import vnow
         now = vnow()
         for i in range(4):
-            cx, cy = self.cw*(i+.5)/4, self.ch-self.ctrl_pad/2
+            cx, cy = self.cw*(i+.5)/4, self.ch-getattr(self, 'safe_bottom', 0)-self.ctrl_pad/2
             if i:
                 r = min(self.ctrl_pad*.23, self.cw/24)
                 self.cv.create_oval(cx-r, cy-r, cx+r, cy+r, outline='#709582', width=1)

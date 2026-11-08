@@ -1209,7 +1209,7 @@ from tournament import TournamentView
 from presentation import VisualResources, asset, screen_change
 
 
-from fire import FireAbility, POWER_FACTOR
+from fire import FireAbility, POWER_FACTOR, ANDROID_SAFE_BOTTOM_DP
 
 
 class Game(FireAbility, TournamentView):
@@ -1294,8 +1294,10 @@ class Game(FireAbility, TournamentView):
             self.oy = self.hud + (hh - (WX1 - PEN_X0) * self.s) / 2
             return
         # v7: franja inferior propia para los controles del arquero (no tapan la cancha)
+        from kivy.metrics import dp
+        self.safe_bottom = min(ch * .12, dp(ANDROID_SAFE_BOTTOM_DP)) if self.state == 'match' else 0
         self.ctrl_pad = min(ch*.16, max(62, min(cw/5, PR*4*min(w/RW,h/RH))+16)) if self.state == 'match' else 0
-        h -= self.ctrl_pad
+        h -= self.ctrl_pad + self.safe_bottom
         if self.rot:
             self.s = min(w / RH, h / RW)
             self.ox = (w - RH * self.s) / 2
@@ -1674,7 +1676,7 @@ class Game(FireAbility, TournamentView):
         sp = math.hypot(vx, vy)
         cap = MAX_DRAG * POWER
         selected = self.fire.selected(body)
-        special = self.state == 'match' and not body.keeper and selected and selected['phase'] == 'aim'
+        special = self.state == 'match' and not body.keeper and selected and selected['phase'] == 'aim' and not self.fire.executing()
         if special:
             cap *= POWER_FACTOR
         if self.state == "match" and body.keeper:
@@ -1908,8 +1910,8 @@ class Game(FireAbility, TournamentView):
 
     def match_update(self, dt):
         now = vnow()
-        fire_scale = self.fire.scale(dt)
         self.fire_update(dt)
+        fire_scale = self.fire.scale(dt)
         lim = self.keeper_limit                        # v8: barrera del área grande
         if self.phase == "goal":
             step(self.bodies, self.ball, fire_scale, None, None, lim)
