@@ -40,10 +40,7 @@ class VisualResources:
         key = (filename, slot if slot is not None else (round(x), round(y), round(width), round(height)))
         cached = self.images.get(key)
         if cached is None:
-            image = self.textures.get(filename)
-            if image is None:
-                image = CoreImage(asset('images', filename), keep_data=False)
-                self.textures[filename] = image
+            image = self.texture(filename)
             group = InstructionGroup()
             group.add(Color(1, 1, 1, 1))
             rectangle = Rectangle(texture=image.texture)
@@ -54,6 +51,13 @@ class VisualResources:
         rectangle.pos = (x, cv.height-y-height)
         rectangle.size = (width, height)
         cv.canvas.add(group)
+
+    def texture(self, filename):
+        image = self.textures.get(filename)
+        if image is None:
+            image = CoreImage(asset('images', filename), keep_data=False)
+            self.textures[filename] = image
+        return image
 
     def show_goal(self, seconds=3):
         self.preload_gif()

@@ -70,7 +70,7 @@ DASH_CHARGE = 0.5                                # s para llegar a potencia máx
 DASH_MIN, DASH_MAX = 22, 150                     # distancia del DASH (mundo)
 DASH_V_MIN, DASH_V_MAX = 8.0, 17.0               # velocidad del DASH (mundo / fotograma)
 # --- v9: música de fondo (ajusta estos valores a tu gusto)
-MUSIC_FILE = "assets/sounds/music/musica_fondo.ogg"                  # debe estar en la misma carpeta que main.py
+MUSIC_FILE = "assets/sounds/music/musica_fondo.mp3"                  # debe estar en la misma carpeta que main.py
 MUSIC_VOL = 0.15                                 # volumen objetivo: 15 % del máximo del archivo
 MUSIC_PEN_VOL = 0.05                             # en penales baja (fade-out) hasta este nivel
 MUSIC_FADE_IN = 4.0                              # s del fade-in al empezar el partido
@@ -336,7 +336,7 @@ class _CanvasWidget(_Widget):
                 verts = []
                 for x, y in pts:
                     verts += [x, y, 0, 0]
-                _Color(*f)
+                _Color(*f, kw.get('alpha', 1.0))
                 _Mesh(vertices=verts, indices=list(range(len(pts))), mode="triangle_fan")
             w = float(width or 0)
             o = _rgb(outline)
@@ -791,7 +791,7 @@ class Sound:
         self.backend = self._detect()
         self.on_event = None
         self.files.update({('', k): asset('sounds', 'effects', k+'.wav')
-                           for k in ('pito','pito_medio','pito_final','toque','uy','derrota')})
+                           for k in ('pito','pito_medio','pito_final','toque','uy','derrota','fuego')})
         for team in TEAMS:
             for kind in ('gol','penal','gana','campeon'):
                 self.files[(team,kind)] = asset('sounds','victory',ABBR[team]+'_'+kind+'.wav')
@@ -1071,7 +1071,7 @@ def collide(a, b):
     b.vx += j * nx / b.m; b.vy += j * ny / b.m
 
 
-def step(bodies, ball, scale=1.0, zone=None, catcher=None, limit=None, touch=None):
+def step(bodies, ball, scale=1.0, zone=None, catcher=None, limit=None, touch=None, collision_policy=None):
     """Avanza la física un fotograma.
     scale: velocidad del tiempo (0,75 = cámara lenta). zone(b): factor de velocidad del arquero
     según esté dentro/fuera del área chica. catcher: arquero que puede atrapar el balón.
@@ -1098,7 +1098,8 @@ def step(bodies, ball, scale=1.0, zone=None, catcher=None, limit=None, touch=Non
                 ball.vx = ball.vy = 0.0
         for i in range(len(bodies)):
             for k in range(i + 1, len(bodies)):
-                collide(bodies[i], bodies[k])
+                if collision_policy is None or collision_policy(bodies[i], bodies[k]):
+                    collide(bodies[i], bodies[k])
     for b in bodies:
         f = FRICTION if b is ball else PLAYER_FRICTION
         if scale != 1.0:
@@ -1208,7 +1209,10 @@ from tournament import TournamentView
 from presentation import VisualResources, asset, screen_change
 
 
-class Game(TournamentView):
+from fire import FireAbility, POWER_FACTOR
+
+
+class Game(FireAbility, TournamentView):
     def __init__(self, root):
         self.root = root
         root.title("Copa Mundial de Chapas")
@@ -1224,6 +1228,7 @@ class Game(TournamentView):
         self.ball = None
         self.keeper = None
         self.gk_reset()
+        self.fire_reset()
         if self.mobile:
             root.geometry(f"{sw}x{sh}+0+0")
             try:
@@ -1289,7 +1294,7 @@ class Game(TournamentView):
             self.oy = self.hud + (hh - (WX1 - PEN_X0) * self.s) / 2
             return
         # v7: franja inferior propia para los controles del arquero (no tapan la cancha)
-        self.ctrl_pad = 0                               # v8: ya no hay botones del arquero
+        self.ctrl_pad = min(ch*.16, max(62, min(cw/5, PR*4*min(w/RW,h/RH))+16)) if self.state == 'match' else 0
         h -= self.ctrl_pad
         if self.rot:
             self.s = min(w / RH, h / RW)
@@ -1475,6 +1480,7 @@ class Game(TournamentView):
         clock_pause(self.paused)
         if self.paused:
             self.drag = None
+            self.fire_pressed = False
             self.pen_hold = 0
             self.music.pause()
         else:
@@ -1490,6 +1496,7 @@ class Game(TournamentView):
         self.drag = None
         self.pen_hold = 0
         self.gk_mode = False
+        self.fire_reset()
         self.music.stop()
         self.visual.gif_until = 0
         if getattr(self, 'defeat_music', None):
@@ -1591,6 +1598,11 @@ class Game(TournamentView):
     # ---------------- partido
     @screen_change
     def start_match(self, opp):
+        self.fire_reset()
+        self.visual.texture('fuego.png')
+        if self.snd.backend == 'kivy':
+            path = self.snd.files[('', 'fuego')]
+            self.snd.cache[path] = self.snd.SL.load(path)
         self.teams = [self.user, opp]
         self.snd.prepare(self.user, opp)
         # dorsales: arquero fijo con el 1, los de campo al azar y sin repetir
@@ -1611,6 +1623,7 @@ class Game(TournamentView):
         self.music.start()                             # v9: fade-in desde 0 % hasta MUSIC_VOL
 
     def reset_positions(self):
+        self.fire.clear()
         self.bodies = []
         for t in (0, 1):
             for i, (fx, fy) in enumerate(FORMATION):
@@ -1660,10 +1673,16 @@ class Game(TournamentView):
     def shoot(self, body, vx, vy):
         sp = math.hypot(vx, vy)
         cap = MAX_DRAG * POWER
+        selected = self.fire.selected(body)
+        special = self.state == 'match' and not body.keeper and selected and selected['phase'] == 'aim'
+        if special:
+            cap *= POWER_FACTOR
         if self.state == "match" and body.keeper:
             cap *= GK_POWER                             # v8: arquero a la mitad de potencia
         if sp > cap:
             vx, vy = vx / sp * cap, vy / sp * cap
+        if special:
+            self.fire.launch(body, vx, vy, vnow(), self.round)
         if self.state == "match" and self.held is body:
             # el arquero con el balón: el arrastre lo suelta en esa dirección (el arquero no se mueve)
             self.release_ball(vx * 1.3, vy * 1.3)
@@ -1741,6 +1760,9 @@ class Game(TournamentView):
     def strike(self, p, ax, ay, ball_v, noise):
         """Lanza la ficha p para llegar a (ax, ay) y darle al balón ~ball_v."""
         cap = MAX_DRAG * POWER
+        if self.fire.selected(p):
+            cap *= POWER_FACTOR
+            ball_v *= POWER_FACTOR
         px, py = ax - p.x, ay - p.y
         dist = math.hypot(px, py) or 1
         # choque ficha(3)-balón(1) con e=0,92: el balón sale ~1,44 veces más rápido
@@ -1817,6 +1839,7 @@ class Game(TournamentView):
                 v = min(dd * (1 - PLAYER_FRICTION), cap * 0.8)
                 self.shoot(back, (cx - back.x) / dd * v, (cy - back.y) / dd * v)
                 return
+        self.fire_ai(best, kind, gdist)
         self.strike(best, ax, ay, ball_v, noise)
 
     def gk_target(self, k):
@@ -1885,22 +1908,28 @@ class Game(TournamentView):
 
     def match_update(self, dt):
         now = vnow()
+        fire_scale = self.fire.scale(dt)
+        self.fire_update(dt)
         lim = self.keeper_limit                        # v8: barrera del área grande
         if self.phase == "goal":
-            step(self.bodies, self.ball, 1.0, None, None, lim)
+            step(self.bodies, self.ball, fire_scale, None, None, lim)
             if now >= self.resume_at:
                 self.reset_positions()
                 if not self.check_period():
                     self.kickoff(1 - self.scorer)
             return
-        sl = self.slowmo()                              # 0,5 mientras controlas al arquero
+        sl = min(self.slowmo(), fire_scale)
         self.clock += dt * sl                           # cronómetro automático (tiempo de juego)
         if self.check_period():
             return
         touch = None
         if self.gk_mode and self.gk_released_at is not None:
             touch = {"k": self.ctrl_keeper(), "hit": False}
-        step(self.bodies, self.ball, sl, None, None, lim, touch)
+            flight = next((s for s in self.fire.shots.values() if s['phase'] == 'flight'), None)
+            if flight and not self.fire.keeper_blocks(flight, touch['k'], (FX0+FX1)/2):
+                touch = None
+        step(self.bodies, self.ball, sl, None, None, lim, touch, self.fire_collision)
+        self.fire_update(0)
         if touch and touch["hit"]:                      # bloqueo + rebote: velocidad normal
             self.gk_mode = False
             self.gk_released_at = None
@@ -1912,6 +1941,7 @@ class Game(TournamentView):
             self.gk_released_at = None
         g = self.check_goal()
         if g is not None:
+            self.fire.clear()
             self.score[g] += 1
             self.scorer = g
             self.flash(f"¡¡GOOOOL de {self.teams[g]}!!", 2.0)
@@ -1934,6 +1964,7 @@ class Game(TournamentView):
 
     @screen_change
     def match_over(self, pen_text=""):
+        self.fire.clear()
         a, b = self.teams
         if pen_text:
             w = pen_text.split("gana ")[-1]
@@ -1968,6 +1999,7 @@ class Game(TournamentView):
     # ---------------- penales
     @screen_change
     def start_penalties(self):
+        self.fire.clear()
         self.pens = [[], []]
         self.pen_k = 0
         self.state = "pens"
@@ -2428,6 +2460,8 @@ class Game(TournamentView):
                     cmd()
                     return
             return
+        if self.state == 'match' and self.fire_press(ev.x, ev.y):
+            return
         if self.state == "pens":
             for x0, y0, x1, y1, d in self.pen_btns:
                 if x0 <= ev.x <= x1 and y0 <= ev.y <= y1:
@@ -2451,6 +2485,8 @@ class Game(TournamentView):
                     if d <= bd:
                         best, bd = p, d
             self.drag = best
+            if best is not None and not best.keeper:
+                self.fire.select(best, vnow())
             if best is not None and best.keeper:        # v8: agarrar al arquero = cámara lenta 50 %
                 self.gk_mode = True
                 self.gk_released_at = None
@@ -2484,6 +2520,8 @@ class Game(TournamentView):
         self.pen_hold = 0
         if self.paused:
             return
+        if self.state == 'match' and self.fire_release(ev.x, ev.y):
+            return
         if self.gk_hold:                                # v7: soltar la flecha = DASH
             self.gk_release()
             return
@@ -2503,6 +2541,8 @@ class Game(TournamentView):
         if self.state == "match":
             if self.phase != "play" or self.kick_team == 1:
                 return
+            if self.fire.selected(p):
+                dx *= POWER_FACTOR; dy *= POWER_FACTOR
             if self.can_shoot(0, None, p.keeper):
                 self.shoot(p, dx * POWER, dy * POWER)
             else:                                       # en recarga: se dispara al terminar
@@ -2515,18 +2555,20 @@ class Game(TournamentView):
     # ---------------- bucle
     def tick(self):
         stamp=time.perf_counter()
-        now=vnow();dt=min(.1,max(0,now-self.last_t));self.last_t=now
+        now=vnow();elapsed=max(0,now-self.last_t);dt=min(.1,elapsed);self.last_t=now
         active=not self.paused and not self.visual.transitioning
         if active:
             if self.state=='match':self.match_update(dt)
             elif self.state=='pens':self.pens_update()
-            elif self.state=='bracket':self.bracket_update(dt)
+            elif self.state=='bracket':self.bracket_update(elapsed)
             self.music.update(dt)
         updated=time.perf_counter()
         # No redraw of frozen pause/static screens. Kivy animates opacity on its own.
         if active:
             if self.state in ('match','pens'):self.draw()
-            elif self.state=='bracket' and self.bracket_event:self.render()
+            elif self.state=='bracket' and (self.bracket_event or getattr(self,'bracket_dirty',False)):
+                self.render()
+                self.bracket_dirty=False
         self.visual.record(updated-stamp,time.perf_counter()-updated)
         self.root.after(16,self.tick)
 
@@ -2535,6 +2577,8 @@ class Game(TournamentView):
         cv = self.cv
         cv.delete("all")
         cv.cached(('pitch',self.cw,self.ch,self.state),self.draw_pitch)
+        if self.state == 'match':
+            self.draw_fire_aura()
 
         self.draw_trail()                               # v7: estela del DASH
         # resaltar fichas del equipo con turno
@@ -2548,10 +2592,12 @@ class Game(TournamentView):
             if b is ck:
                 cv.create_oval(sx - R * 1.45, sy - R * 1.45, sx + R * 1.45, sy + R * 1.45,
                                outline="#00e5ff", width=max(2, R * 0.16))
-            if active and b.team == 0:
+            if active and b.team == 0 and not self.fire.selected(b):
                 pulse = 1.25 + 0.1 * math.sin(vnow() * 8)
                 cv.create_oval(sx - R * pulse, sy - R * pulse, sx + R * pulse, sy + R * pulse,
                                outline="#fff36b", width=max(1.5, R * 0.14))
+            if self.state == 'match':
+                self.draw_fire_ring(b, sx, sy, R)
             self.jersey(sx, sy, R, self.teams[b.team], b.keeper, b.team, b.num)
 
         # balón
@@ -2577,12 +2623,15 @@ class Game(TournamentView):
             self.line_w(p.x, p.y, ex, ey, fill=col, width=max(2, 5 * self.s), arrow="last",
                         arrowshape=(16 * self.s + 6, 20 * self.s + 7, 7 * self.s + 3))
             px, py = self.to_s(p.x, p.y)
-            cv.create_text(px, py - (p.r + 22) * self.s - 6, text=f"{int(pw * 100)}%", fill=col,
+            maximum = 150 if self.state == 'match' and self.fire.selected(p) else 100
+            cv.create_text(px, py - (p.r + 22) * self.s - 6, text=f"{int(pw * maximum)}%", fill=col,
                            font=self.F(0.9))
 
         if self.state == "pens":
             self.draw_pens_overlay()
         self.draw_hud()
+        if self.state == 'match':
+            self.draw_fire_button()
         self.draw_pause_button()
 
         cd = self.countdown()[0] if self.state == "pens" and self.pen_wait and not self.lock else None

@@ -113,6 +113,8 @@ class TournamentView:
         self.bracket_event = None
         self.bracket_camera = None
         self.bracket_done = False
+        self.bracket_lost = False
+        self.bracket_dirty = True
         self.bracket_sound = None
         self.bracket_audio_cache = {}
         self.defeat_music = None
@@ -202,7 +204,8 @@ class TournamentView:
         event['elapsed'] = 0.0
         event['sound_started'] = False
         event['arrived'] = False
-        event['duration'] = self.advance_duration
+        event['travel_duration'] = min(5.0, self.advance_duration/2)
+        event['duration'] = event['travel_duration']+.65
         self.bracket_event = event
         event['advance_audio'] = False
         if not getattr(getattr(self,'visual',None),'transitioning',False):
@@ -213,7 +216,7 @@ class TournamentView:
         if event and not event['advance_audio']:
             event['advance_audio']=True
             event['elapsed']=0.0
-            self.play_bracket_sound('avanzar_nivel.wav')
+            # Confirmation is emitted by the actual arrival event, not a timer before it.
 
     def start_defeat_music(self):
         if not getattr(self.snd,'on',True):return
@@ -232,11 +235,13 @@ class TournamentView:
             return
         e['elapsed'] += max(0,dt)
         t = e['elapsed']
-        if t >= e['duration']/2 and not e['arrived']:
+        if t >= e['travel_duration'] and not e['arrived']:
             self.bracket_levels[e['stage']+1][e['dest']] = e['team']
             e['arrived'] = True
+            self.play_bracket_sound('avanzar_nivel.wav')
+            self.bracket_dirty = True
         if e['losing']:
-            zoom_start = e['duration']/2+2
+            zoom_start = e['duration']+2
             fall_start = zoom_start+2
             if t >= zoom_start and not e.get('defeat_music_started'):
                 e['defeat_music_started']=True
@@ -251,7 +256,8 @@ class TournamentView:
                 if self.bracket_sound: self.bracket_sound.stop()
                 self.bracket_event = None
                 if self.defeat_music:self.defeat_music.stop()
-                self.restart_tournament()
+                self.bracket_lost = True
+                self.bracket_dirty = True
         elif e['champion']:
             if t >= e['duration'] and not e['sound_started']:
                 e['sound_started'] = True
@@ -261,17 +267,24 @@ class TournamentView:
                 self.bracket_done = True
                 self.bracket_event = None
                 self.bracket_camera = ('champion', 1)
+                self.bracket_dirty = True
         elif t >= e['duration']:
             self.next_bracket_event()
+            self.bracket_dirty = True
 
     def draw_bracket(self):
         from main import ROUND_NAMES, SHORT, ABBR, kit_for, clip, CIRCLE
         cv, w, h = self.cv, self.cw, self.ch
         self.pitch_bg()
+        if self.bracket_lost:
+            cv.create_rectangle(0,0,w,h,fill='#000000',width=0)
+            cv.create_text(w/2,h*.35,text='PERDISTE',fill=GOLD,font=self.F(3),width=w*.9)
+            self.button(w/2,h*.7,min(w*.8,330),48,'VOLVER AL MENÚ',self.restart_tournament,font=self.F(1.05))
+            return
         current = self.bracket_event
         special = self.bracket_done or (current and (
             (current['champion'] and current['elapsed'] >= current['duration']) or
-            (current['losing'] and current['elapsed'] > current['duration']/2+2)))
+            (current['losing'] and current['elapsed'] > current['duration']+2)))
         if not special:
             self.title(max(28,self.u*2), ROUND_NAMES[self.round].upper(), 1.8)
         bh = max(32,min(48,self.u*2.8))
@@ -287,7 +300,7 @@ class TournamentView:
         if e:
             t = e['elapsed']
             if e['losing']:
-                zstart = e['duration']/2+2
+                zstart = e['duration']+2
                 p = max(0,min(1,(t-zstart)/2))
                 camera_progress = p*p*(3-2*p)
                 target = nodes[e['stage']][e['loser']]
@@ -367,10 +380,10 @@ class TournamentView:
                     cv.create_text(x,y+r+max(8,radius*.7),text=label,fill=GOLD if team==self.user else WHITE,
                                    font=('Helvetica',-max(7,int(radius*.68)),'bold'))
         if e:
-            p = min(1,e['elapsed']/(e['duration']/2))
+            p = min(1,e['elapsed']/e['travel_duration'])
             x,y = screen(path_point(connection(nodes[e['stage']][e['src']],nodes[e['stage']+1][e['dest']]),p))
             if (not e['losing'] or not e['arrived']) and not (e['champion'] and special):
-                halo = r*(1.25+.16*math.sin(max(0,e['elapsed']-e['duration']/2)*math.tau))
+                halo = r*(1.25+.16*math.sin(max(0,e['elapsed']-e['travel_duration'])*math.tau))
                 if not e['losing']:
                     cv.create_oval(x-halo,y-halo,x+halo,y+halo,outline=GOLD,width=max(2,r*.14))
                 self._moving_token=True
@@ -381,18 +394,18 @@ class TournamentView:
             x,y = screen(nodes[4][0])
             t = e['elapsed']-e['duration'] if e else 7
             lift = min(1,max(0,(t-1)/2))
-            for j in range(18):
-                angle = j*math.tau/18+t*.25
-                dist = r*(1.8+.3*math.sin(t+j))
-                cx,cy = x+math.cos(angle)*dist,y+math.sin(angle)*dist
-                cv.create_oval(cx-2,cy-2,cx+2,cy+2,fill=WHITE,width=0)
             cup_y = y-r*(.1+1.75*lift)
-            # The supplied token/arms emblem stays attached to the jersey disc.
-            self.visual.png('brazos_ganador.png',x-r*1.15,y-r*1.1-r*.25*lift,r*2.3,r*2.3,slot='champion-arms')
-            self.jersey(x,y,r*.77,self.user)
             cup_h=r*1.8
-            self.visual.png('copa_render.png',x-cup_h*130/300/2,cup_y-cup_h*.7,
-                            cup_h*130/300,cup_h,slot='champion-cup')
+            cup_w=cup_h*693/1600
+            hand_y=cup_y+cup_h*.14
+            arm_top=hand_y-r*.18
+            arm_h=max(r*.6,y+r*.6-arm_top)
+            # Foreground limbs: shoulders remain attached while hands follow the cup.
+            self.visual.png('brazos_ganador.png',x-r*1.15,arm_top,r*2.3,arm_h,slot='champion-arms')
+            self.visual.png('copa.png',x-cup_w/2,cup_y-cup_h*.7,cup_w,cup_h,slot='champion-cup')
+            for side in (-1,1):
+                hx=x+side*cup_w*.32
+                cv.create_oval(hx-r*.12,hand_y-r*.12,hx+r*.12,hand_y+r*.12,fill=WHITE,width=0)
             cv.create_text(w/2,h*.78,text='¡CAMPEÓN DEL MUNDO!',fill=GOLD,font=self.F(1.7),width=w*.94)
         if hasattr(self,'visual'):self.visual.draw_goal()
         if fall_time is not None:
@@ -411,4 +424,4 @@ class TournamentView:
                 if self.results:
                     mine = next((x[2:] for x in self.results[-1] if x.startswith('* ')), '')
                     cv.create_text(w/2,h-78,text=mine,fill=WHITE,font=self.F(.85),width=w*.92)
-                self.button(w/2,h-38,min(w*.8,330),44,'JUGAR PARTIDO',lambda:self.start_match(opp),font=self.F(1.05))
+                self.button(w/2,h-38,min(w*.8,330),44,'SIGUIENTE PARTIDO' if self.results else 'JUGAR PARTIDO',lambda:self.start_match(opp),font=self.F(1.05))
