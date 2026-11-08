@@ -1,83 +1,155 @@
-[app]
+name: Mundialito - APK Android
 
-# (str) Título de tu aplicación
-title = Copa Mundial Chapas
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
 
-# (str) Nombre del paquete (sin espacios ni mayúsculas)
-package.name = copamundialchapas
+permissions:
+  contents: read
 
-# (str) Dominio del paquete
-package.domain = org.copamundial
+concurrency:
+  group: mundialito-apk-${{ github.ref }}
+  cancel-in-progress: true
 
-# (str) Directorio fuente donde está tu main.py (relativo a este archivo)
-source.dir = .
+jobs:
+  apk:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    env:
+      ANDROID_API: "34"
+      ANDROID_NDK_VERSION: "25.1.8937393"
+      ANDROID_BUILD_TOOLS: "34.0.0"
+      ANDROID_COMMAND_TOOLS: "11076708"
 
-# (list) Archivos fuente a incluir (extensiones permitidas)
-source.include_exts = py,png,jpg,kv,atlas,json,ogg,wav,ttf
+    steps:
+      - name: Descargar proyecto
+        uses: actions/checkout@v4
 
-# (list) Directorios a excluir (opcional)
-#source.exclude_dirs = tests, bin, venv
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-# (list) Archivos a excluir (opcional)
-#source.exclude_exts = spec
+      - name: Preparar Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
 
-# (list) Requisitos de tu aplicación
-# Añade aquí todas las librerías de Python que necesite tu juego
-requirements = python3,kivy,pillow,sdl2_mixer,sdl2_image,pyjnius
+      - name: Instalar dependencias Linux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git curl zip unzip autoconf automake libtool \
+            pkg-config cmake patch gettext autopoint zlib1g-dev \
+            libncurses5-dev libncursesw5-dev libtinfo5 libffi-dev libssl-dev
 
-# (str) Versión de la aplicación
-version = 0.1
+      - name: Instalar herramientas Python con versiones fijas
+        run: |
+          python -m pip install "pip==24.0"
+          python -m pip install "buildozer==1.6.0" "Cython==0.29.33" \
+            "setuptools==69.5.1" "wheel==0.43.0"
 
-# (list) Icono de la aplicación (descomenta y apunta a tu archivo si lo tienes)
-#icon.filename = %(source.dir)s/data/icon.png
+      - name: Validar estructura del proyecto PNG
+        run: |
+          python - <<'PY'
+          import configparser
+          import pathlib
+          import py_compile
+          root = pathlib.Path('.')
+          required = ('main.py', 'tournament.py', 'presentation.py', 'buildozer.spec',
+                      'assets/images/brazos_ganador.png', 'assets/images/copa.png',
+                      'assets/animations/gol.gif')
+          missing = [name for name in required if not (root / name).is_file()]
+          if missing:
+              raise SystemExit('Faltan archivos en la raiz del repositorio: ' + ', '.join(missing))
+          config = configparser.ConfigParser(interpolation=None)
+          config.read('buildozer.spec', encoding='utf-8')
+          if config['app'].get('source.dir', '.').strip() != '.':
+              raise SystemExit('Esta configuracion requiere source.dir = .')
+          for name in ('main.py', 'tournament.py', 'presentation.py'):
+              py_compile.compile(name, doraise=True)
+          print('Estructura PNG y sintaxis Python comprobadas.')
+          PY
 
-# (list) Pantalla de carga / Splash screen (descomenta si la tienes)
-#presplash.filename = %(source.dir)s/data/splash.png
+      - name: Instalar SDK y NDK compatibles en carpeta aislada
+        run: |
+          SDK="$RUNNER_TEMP/mundialito-android-sdk"
+          mkdir -p "$SDK"
+          curl --fail --location --retry 3 \
+            "https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_COMMAND_TOOLS}_latest.zip" \
+            -o "$RUNNER_TEMP/android-tools.zip"
+          unzip -q "$RUNNER_TEMP/android-tools.zip" -d "$SDK"
+          # Buildozer busca tools/bin/sdkmanager; no usa el SDK preinstalado del runner.
+          mv "$SDK/cmdline-tools" "$SDK/tools"
+          for i in {1..200}; do printf 'y\n'; done > "$RUNNER_TEMP/android-license-answers.txt"
+          "$SDK/tools/bin/sdkmanager" --sdk_root="$SDK" --licenses \
+            < "$RUNNER_TEMP/android-license-answers.txt"
+          "$SDK/tools/bin/sdkmanager" --sdk_root="$SDK" \
+            "platform-tools" "platforms;android-${ANDROID_API}" \
+            "build-tools;${ANDROID_BUILD_TOOLS}" "ndk;${ANDROID_NDK_VERSION}" \
+            < "$RUNNER_TEMP/android-license-answers.txt"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$SDK/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          echo "$SDK/tools/bin" >> "$GITHUB_PATH"
+          echo "$SDK/platform-tools" >> "$GITHUB_PATH"
+          test -x "$SDK/build-tools/$ANDROID_BUILD_TOOLS/aidl"
+          test -f "$SDK/ndk/$ANDROID_NDK_VERSION/source.properties"
 
-# (list) Orientación soportada (landscape para horizontal, portrait para vertical)
-orientation = landscape
+      - name: Ajustar solo herramientas Android para esta compilacion
+        run: |
+          python - <<'PY'
+          import configparser
+          import os
+          config = configparser.ConfigParser(interpolation=None)
+          config.read('buildozer.spec', encoding='utf-8')
+          app = config['app']
+          app['android.api'] = os.environ['ANDROID_API']
+          app['android.minapi'] = '21'
+          app['android.ndk'] = '25b'
+          app['android.ndk_api'] = '21'
+          app['android.sdk_path'] = os.environ['ANDROID_HOME']
+          app['android.ndk_path'] = os.environ['ANDROID_NDK_HOME']
+          app['android.skip_update'] = 'True'
+          app['android.accept_sdk_license'] = 'True'
+          app['p4a.branch'] = 'v2024.01.21'
+          extensions = [part.strip() for part in app.get('source.include_exts', '').split(',') if part.strip()]
+          for extension in ('png', 'gif', 'json', 'mp3', 'wav', 'py'):
+              if extension not in extensions:
+                  extensions.append(extension)
+          app['source.include_exts'] = ','.join(extensions)
+          # Identidad, requisitos Kivy/Pillow, orientacion y arquitecturas no cambian.
+          with open('buildozer.spec', 'w', encoding='utf-8') as stream:
+              config.write(stream)
+          PY
+          python -m pip freeze > herramientas-apk.txt
 
-# (bool) Indicar si la aplicación es o no de pantalla completa
-fullscreen = 1
+      - name: Compilar APK debug
+        run: |
+          set -o pipefail
+          buildozer -v android debug 2>&1 | tee compilacion-apk.log
 
-# (list) Permisos de Android necesarios (descomenta si usas internet, vibración, etc.)
-#android.permissions = INTERNET,VIBRATE
+      - name: Publicar APK descargable
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mundialito-APK-debug
+          path: bin/*.apk
+          if-no-files-found: error
+          retention-days: 14
 
-# (list) Características requeridas por la aplicación (opcional)
-#android.features = android.hardware.usb.host
-
-# (str) Versión mínima del SDK de Android soportada
-android.minapi = 21
-
-# (int) SDK de Android de destino
-android.api = 33
-
-# (str) Versión del NDK de Android a utilizar
-android.ndk = 25b
-
-# (str) Versión de las herramientas de compilación de Android
-android.build_tools_version = 33.0.2
-
-# (bool) Usar o no AndroidX (recomendado True para librerías modernas)
-android.androidx = True
-
-# (list) Arquitecturas de Android a compilar (arm64-v8a para modernos, armeabi-v7a para antiguos)
-android.archs = arm64-v8a, armeabi-v7a
-
-# (str) Clave de firma para modo release (dejar comentado para compilación debug en GitHub Actions)
-#android.release_artifact = aar
-#android.debug_artifact = apk
-
-[buildozer]
-
-# (int) Nivel de registro (0 = error, 1 = info, 2 = debug con información detallada)
-log_level = 2
-
-# (int) Indicar si se muestra advertencia al ejecutar como root (0 = falso, 1 = verdadero)
-warn_on_root = 1
-
-# (str) Directorio donde se descargan las dependencias del SDK/NDK (por defecto .buildozer)
-#build_dir = .buildozer
-
-# (str) Directorio de salida para los binarios compilados (APKs)
-#bin_dir = ./bin
+      - name: Guardar diagnostico incluso si falla
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mundialito-diagnostico
+          path: |
+            compilacion-apk.log
+            herramientas-apk.txt
+            buildozer.spec
+          if-no-files-found: warn
+          retention-days: 7
