@@ -1,55 +1,83 @@
-name: CI
+[app]
 
-on:
-  push:
-    branches: [ main, master ]
+# (str) Título de tu aplicación
+title = Copa Mundial Chapas
 
-jobs:
-  build:
-    runs-on: ubuntu-22.04
+# (str) Nombre del paquete (sin espacios ni mayúsculas)
+package.name = copamundialchapas
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+# (str) Dominio del paquete
+package.domain = org.copamundial
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
+# (str) Directorio fuente donde está tu main.py (relativo a este archivo)
+source.dir = .
 
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
+# (list) Archivos fuente a incluir (extensiones permitidas)
+source.include_exts = py,png,jpg,kv,atlas,json,ogg,wav,ttf
 
-      - name: Install System Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-              git \
-              zip \
-              unzip \
-              autoconf \
-              libtool \
-              pkg-config \
-              zlib1g-dev \
-              libffi-dev \
-              libssl-dev
+# (list) Directorios a excluir (opcional)
+#source.exclude_dirs = tests, bin, venv
 
-      - name: Install Buildozer and Cython
-        run: |
-          pip install --upgrade pip
-          pip install --upgrade setuptools
-          pip install cython buildozer
+# (list) Archivos a excluir (opcional)
+#source.exclude_exts = spec
 
-      - name: Build APK with Buildozer
-        run: |
-          yes | buildozer -v android debug
+# (list) Requisitos de tu aplicación
+# Añade aquí todas las librerías de Python que necesite tu juego
+requirements = python3,kivy,pillow,sdl2_mixer,sdl2_image,pyjnius
 
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: CopaMundialChapas-APK
-          path: bin/*.apk
-          
+# (str) Versión de la aplicación
+version = 0.1
+
+# (list) Icono de la aplicación (descomenta y apunta a tu archivo si lo tienes)
+#icon.filename = %(source.dir)s/data/icon.png
+
+# (list) Pantalla de carga / Splash screen (descomenta si la tienes)
+#presplash.filename = %(source.dir)s/data/splash.png
+
+# (list) Orientación soportada (landscape para horizontal, portrait para vertical)
+orientation = landscape
+
+# (bool) Indicar si la aplicación es o no de pantalla completa
+fullscreen = 1
+
+# (list) Permisos de Android necesarios (descomenta si usas internet, vibración, etc.)
+#android.permissions = INTERNET,VIBRATE
+
+# (list) Características requeridas por la aplicación (opcional)
+#android.features = android.hardware.usb.host
+
+# (str) Versión mínima del SDK de Android soportada
+android.minapi = 21
+
+# (int) SDK de Android de destino
+android.api = 33
+
+# (str) Versión del NDK de Android a utilizar
+android.ndk = 25b
+
+# (str) Versión de las herramientas de compilación de Android
+android.build_tools_version = 33.0.2
+
+# (bool) Usar o no AndroidX (recomendado True para librerías modernas)
+android.androidx = True
+
+# (list) Arquitecturas de Android a compilar (arm64-v8a para modernos, armeabi-v7a para antiguos)
+android.archs = arm64-v8a, armeabi-v7a
+
+# (str) Clave de firma para modo release (dejar comentado para compilación debug en GitHub Actions)
+#android.release_artifact = aar
+#android.debug_artifact = apk
+
+[buildozer]
+
+# (int) Nivel de registro (0 = error, 1 = info, 2 = debug con información detallada)
+log_level = 2
+
+# (int) Indicar si se muestra advertencia al ejecutar como root (0 = falso, 1 = verdadero)
+warn_on_root = 1
+
+# (str) Directorio donde se descargan las dependencias del SDK/NDK (por defecto .buildozer)
+#build_dir = .buildozer
+
+# (str) Directorio de salida para los binarios compilados (APKs)
+#bin_dir = ./bin
