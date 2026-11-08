@@ -17,21 +17,25 @@ class Fake(TournamentView):
 class Rules(unittest.TestCase):
     def test_sixteen_teams_and_empty_future(self):
         f=Fake(); self.assertEqual([len(x) for x in f.bracket_levels],[16,8,4,2,1]); self.assertTrue(all(t is None for row in f.bracket_levels[1:] for t in row))
-    def test_advance_every_round_half_audio(self):
+    def test_advance_sound_on_arrival_and_next_button_ready(self):
         f=Fake()
         for stage in range(4):
+            f.sounds=[]
             f.state='match';f.finish_user_match(f.user,'Argentina 1-0 rival'); e=f.bracket_event
-            self.assertEqual(e['stage'],stage);self.assertEqual(f.sounds[-1],'avanzar_nivel.wav')
-            f.bracket_update(e['duration']/2-.01); self.assertIsNone(f.bracket_levels[stage+1][e['dest']])
-            f.bracket_update(.01);self.assertEqual(f.bracket_levels[stage+1][e['dest']],f.user)
+            self.assertEqual(e['stage'],stage);self.assertNotIn('avanzar_nivel.wav',f.sounds[-1:])
+            f.bracket_update(e['travel_duration']-.01); self.assertIsNone(f.bracket_levels[stage+1][e['dest']]);self.assertNotIn('avanzar_nivel.wav',f.sounds[-1:])
+            f.bracket_update(.01);self.assertEqual(f.bracket_levels[stage+1][e['dest']],f.user);self.assertEqual(f.sounds[-1],'avanzar_nivel.wav')
             self.assertEqual(path_point(connection((0,0),(20,30)),1),(20,30))
-            f.bracket_update(e['duration']/2+.02)
+            if stage<3:
+                f.bracket_update(e['duration']-e['travel_duration']);self.assertIsNone(f.bracket_event);self.assertTrue(f.bracket_dirty)
+            else:f.bracket_update(e['duration'])
         f.bracket_update(7);self.assertTrue(f.bracket_done)
     def test_defeat_order_and_return(self):
         f=Fake(); opp=f.round_teams[1];f.finish_user_match(opp,'lost');e=f.bracket_event
-        f.bracket_update(e['duration']/2);self.assertEqual(f.bracket_levels[1][0],opp);self.assertNotIn((0,0),f.broken)
+        f.bracket_update(e['travel_duration']);self.assertEqual(f.bracket_levels[1][0],opp);self.assertNotIn((0,0),f.broken)
+        f.bracket_update(e['duration']-e['travel_duration'])
         f.bracket_update(4);self.assertIn((0,0),f.broken);self.assertEqual(f.sounds[-1],'perder.wav');self.assertEqual(f.state,'bracket')
-        f.bracket_update(f.defeat_duration+.26);self.assertEqual(f.state,'menu')
+        f.bracket_update(f.defeat_duration+.26);self.assertEqual(f.state,'bracket');self.assertTrue(f.bracket_lost)
     def test_three_random_breaks(self):
         pieces=[make_fragments(i,random.Random(100)) for i in range(3)]
         self.assertTrue(all(len(p)>=6 for p in pieces));self.assertNotEqual(pieces[0],pieces[1]);self.assertNotEqual(pieces[1],pieces[2])
