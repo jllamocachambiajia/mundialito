@@ -56,6 +56,10 @@ ET_REAL = 20 * REAL_PER_MIN                      # 66,7 s ~ 1:07 (2 x 33,3 s)
 MARKS = [HALF_REAL, 2 * HALF_REAL, 2 * HALF_REAL + ET_REAL / 2, 2 * HALF_REAL + ET_REAL]
 COOLDOWN = 1.0                                   # recarga propia de cada equipo (s)
 CD_STEP = 0.8                                    # duración de cada número del conteo de penales
+PEN_GOAL_SCALE = 1.5
+PEN_GY0, PEN_GY1 = MY - GOAL_H * PEN_GOAL_SCALE / 2, MY + GOAL_H * PEN_GOAL_SCALE / 2
+PEN_GD = GD * PEN_GOAL_SCALE
+PEN_WX1 = FX1 + PEN_GD + 10
 PEN_X0 = FX1 - 330                               # zona visible en penales
 # --- v7: arquero
 SMALL_W, SMALL_H = 55, 70                        # área chica (profundidad, media altura)
@@ -1027,26 +1031,27 @@ class Body:
 
 
 # ------------------------------------------------------------------ física
-def walls(b, is_ball):
+def walls(b, is_ball, goal=None):
+    gy0, gy1, depth = (GY0, GY1, GD) if goal is None else goal
     if b.y - b.r < FY0 and not (is_ball and (b.x < FX0 or b.x > FX1)):
         b.y = FY0 + b.r; b.vy = -b.vy * 0.8
     if b.y + b.r > FY1 and not (is_ball and (b.x < FX0 or b.x > FX1)):
         b.y = FY1 - b.r; b.vy = -b.vy * 0.8
-    in_goal = is_ball and GY0 < b.y < GY1
+    in_goal = is_ball and gy0 < b.y < gy1
     for side in (-1, 1):
         line = FX0 if side < 0 else FX1
         past = (b.x - b.r < line) if side < 0 else (b.x + b.r > line)
         if not past:
             continue
         if in_goal:
-            back = line - GD if side < 0 else line + GD
+            back = line - depth if side < 0 else line + depth
             if side < 0 and b.x - b.r < back:
                 b.x = back + b.r; b.vx = -b.vx * 0.3
             if side > 0 and b.x + b.r > back:
                 b.x = back - b.r; b.vx = -b.vx * 0.3
             if (side < 0 and b.x < line) or (side > 0 and b.x > line):
-                if b.y - b.r < GY0: b.y = GY0 + b.r; b.vy = -b.vy * 0.5
-                if b.y + b.r > GY1: b.y = GY1 - b.r; b.vy = -b.vy * 0.5
+                if b.y - b.r < gy0: b.y = gy0 + b.r; b.vy = -b.vy * 0.5
+                if b.y + b.r > gy1: b.y = gy1 - b.r; b.vy = -b.vy * 0.5
         else:
             b.x = line + b.r if side < 0 else line - b.r
             b.vx = -b.vx * 0.8
@@ -1071,7 +1076,7 @@ def collide(a, b):
     b.vx += j * nx / b.m; b.vy += j * ny / b.m
 
 
-def step(bodies, ball, scale=1.0, zone=None, catcher=None, limit=None, touch=None, collision_policy=None):
+def step(bodies, ball, scale=1.0, zone=None, catcher=None, limit=None, touch=None, collision_policy=None, goal=None):
     """Avanza la física un fotograma.
     scale: velocidad del tiempo (0,75 = cámara lenta). zone(b): factor de velocidad del arquero
     según esté dentro/fuera del área chica. catcher: arquero que puede atrapar el balón.
@@ -1085,7 +1090,7 @@ def step(bodies, ball, scale=1.0, zone=None, catcher=None, limit=None, touch=Non
             if zone is not None and b.keeper:
                 k *= zone(b)
             b.x += b.vx * k; b.y += b.vy * k
-            walls(b, b is ball)
+            walls(b, b is ball, goal)
             if limit is not None and b.keeper:
                 limit(b)
         if touch is not None and not touch["hit"]:
@@ -1212,7 +1217,10 @@ from presentation import VisualResources, asset, screen_change
 from fire import FireAbility, POWER_FACTOR, ANDROID_SAFE_BOTTOM_DP
 
 
-class Game(FireAbility, TournamentView):
+from ai import RivalAI, ENHANCED_COOLDOWN
+
+
+class Game(RivalAI, FireAbility, TournamentView):
     def __init__(self, root):
         self.root = root
         root.title("Copa Mundial de Chapas")
@@ -1289,9 +1297,9 @@ class Game(FireAbility, TournamentView):
             self.pen_pad = self.u * 7.4                 # botones + barra de potencia
             hh = h - self.pen_pad
             span = min(RH, 2 * 230)                    # ancho visible: área grande y algo más
-            self.s = min(w / span, hh / (WX1 - PEN_X0))
+            self.s = min(w / span, hh / (PEN_WX1 - PEN_X0))
             self.ox = w / 2 - (MY - WY0) * self.s      # portería centrada
-            self.oy = self.hud + (hh - (WX1 - PEN_X0) * self.s) / 2
+            self.oy = self.hud + (hh - (PEN_WX1 - PEN_X0) * self.s) / 2
             return
         # v7: franja inferior propia para los controles del arquero (no tapan la cancha)
         from kivy.metrics import dp
@@ -1317,12 +1325,12 @@ class Game(FireAbility, TournamentView):
 
     def to_s(self, x, y):
         if self.rot:   # el equipo del jugador (izquierda) queda abajo, atacando hacia arriba
-            return self.ox + (y - WY0) * self.s, self.oy + (WX1 - x) * self.s
+            return self.ox + (y - WY0) * self.s, self.oy + ((PEN_WX1 if self.state == "pens" else WX1) - x) * self.s
         return self.ox + (x - WX0) * self.s, self.oy + (y - WY0) * self.s
 
     def to_w(self, sx, sy):
         if self.rot:
-            return WX1 - (sy - self.oy) / self.s, WY0 + (sx - self.ox) / self.s
+            return (PEN_WX1 if self.state == "pens" else WX1) - (sy - self.oy) / self.s, WY0 + (sx - self.ox) / self.s
         return WX0 + (sx - self.ox) / self.s, WY0 + (sy - self.oy) / self.s
 
     def poly_w(self, pts, **kw):
@@ -1600,6 +1608,7 @@ class Game(FireAbility, TournamentView):
     # ---------------- partido
     @screen_change
     def start_match(self, opp):
+        self.ai_reset()
         self.fire_reset()
         self.visual.texture('fuego.png')
         if self.snd.backend == 'kivy':
@@ -1669,6 +1678,8 @@ class Game(FireAbility, TournamentView):
 
     def ai_delay(self):
         # reacción de la CPU tras terminar la recarga (mejor rating = más rápida)
+        if self.ai_hard():
+            return 0.0
         r = rating(self.teams[1])
         return random.uniform(0.25, 0.75) * (1.6 - r / 100)
 
@@ -1702,7 +1713,7 @@ class Game(FireAbility, TournamentView):
                     self.ai_gk_at = self.gk_next[1] + random.uniform(0.1, 0.35)
             else:
                 # solo se recarga el equipo que tiró; el rival NO se toca
-                self.next_shot_at[t] = now + COOLDOWN
+                self.next_shot_at[t] = now + (ENHANCED_COOLDOWN if t == 1 and self.ai_hard() else COOLDOWN)
                 if t == 1:
                     self.ai_at = self.next_shot_at[1] + self.ai_delay()
             self.snd.play("toque", dur=0.15)
@@ -1778,7 +1789,16 @@ class Game(FireAbility, TournamentView):
         b = self.ball
         bx, by = self.predict(b, 22)
         field = [p for p in self.bodies if p.team == 1 and not p.keeper]
-        noise = (100 - rating(self.teams[1])) * 0.005
+        noise = (100 - rating(self.teams[1])) * (0.001 if self.ai_hard() else 0.005)
+        plan = self.ai_fire_plan(field)
+        if plan is not None:
+            _, special_player, sx, sy, gy, bank = plan
+            if self.fire_ai(special_player, "tiro", math.hypot(sx-FX0, sy-MY)):
+                # Transfer follows this real disc vector, with no pass offset or angular noise.
+                dx, dy = sx-special_player.x, sy-special_player.y
+                distance = math.hypot(dx, dy)
+                self.shoot(special_player, dx/distance*MAX_DRAG*POWER*POWER_FACTOR, dy/distance*MAX_DRAG*POWER*POWER_FACTOR)
+                return
         cap = MAX_DRAG * POWER
         ukeep = next((p for p in self.bodies if p.team == 0 and p.keeper), None)
         # 1) objetivo: portería (apuntando lejos del arquero) o pase a un compañero mejor ubicado
@@ -1790,7 +1810,7 @@ class Game(FireAbility, TournamentView):
         else:
             gy = MY + random.uniform(-45, 45)
         target, kind, recv = (FX0 - 15, gy), "tiro", None
-        if gdist > 300 or not self.lane_free(bx, by, FX0, gy, 1):
+        if gdist > (480 if self.ai_hard() else 300) or not self.lane_free(bx, by, FX0, gy, 1):
             best_m, best_s = None, (gdist * 0.9 if gdist <= 480 else 1e9)
             for m in field:
                 d = math.hypot(m.x - bx, m.y - by)
@@ -1805,7 +1825,7 @@ class Game(FireAbility, TournamentView):
                 s = math.hypot(m.x - FX0, m.y - MY) + d * 0.25 - min(press, 120) * 0.8
                 if s < best_s:
                     best_m, best_s = m, s
-            if best_m is not None and random.random() < 0.8:
+            if best_m is not None and random.random() < (0.95 if self.ai_hard() else 0.8):
                 lead = 25 if best_m.x > FX0 + 60 else 0
                 target, kind, recv = (best_m.x - lead, best_m.y), "pase", best_m
         tx, ty = target
@@ -1829,11 +1849,11 @@ class Game(FireAbility, TournamentView):
         if kind == "tiro":
             close = max(0.0, min(1.0, 1 - (gdist - 120) / 420))
             ball_v = cap * 1.44 * random.uniform(0.72 + 0.2 * close, 0.95 + 0.05 * close)
-            ball_v = max(ball_v, cap * 1.44 * 0.7)           # nada de tiros flojos
+            ball_v = max(ball_v, cap * 1.44 * (0.95 if self.ai_hard() else 0.7))           # nada de tiros flojos
         else:
             ball_v = d * (1 - FRICTION) * random.uniform(1.15, 1.35) + 2.0
         # 4) si el balón está lejísimos y en nuestra mitad, un defensor se reubica (cubre espacio)
-        if math.hypot(ax - best.x, ay - best.y) > 420 and b.x > (FX0 + FX1) / 2 and random.random() < 0.5:
+        if not self.ai_hard() and math.hypot(ax - best.x, ay - best.y) > 420 and b.x > (FX0 + FX1) / 2 and random.random() < 0.5:
             back = max(field, key=lambda p: p.x)
             cx, cy = (b.x + FX1) / 2, (b.y + MY) / 2
             dd = math.hypot(cx - back.x, cy - back.y)
@@ -1841,7 +1861,6 @@ class Game(FireAbility, TournamentView):
                 v = min(dd * (1 - PLAYER_FRICTION), cap * 0.8)
                 self.shoot(back, (cx - back.x) / dd * v, (cy - back.y) / dd * v)
                 return
-        self.fire_ai(best, kind, gdist)
         self.strike(best, ax, ay, ball_v, noise)
 
     def gk_target(self, k):
@@ -1879,7 +1898,7 @@ class Game(FireAbility, TournamentView):
             return
         cap = MAX_DRAG * POWER * GK_POWER
         v = min(cap, d * (1 - PLAYER_FRICTION) * (1.35 if urgent else 1.05))
-        err = (100 - rating(self.teams[1])) * 0.004
+        err = (100 - rating(self.teams[1])) * (0.001 if self.ai_hard() else 0.004)
         a = math.atan2(dy, dx) + random.gauss(0, err)
         self.shoot(k, math.cos(a) * v, math.sin(a) * v)
 
@@ -1910,6 +1929,7 @@ class Game(FireAbility, TournamentView):
 
     def match_update(self, dt):
         now = vnow()
+        self.ai_update_difficulty()
         self.fire_update(dt)
         fire_scale = self.fire.scale(dt)
         lim = self.keeper_limit                        # v8: barrera del área grande
@@ -1945,6 +1965,7 @@ class Game(FireAbility, TournamentView):
         if g is not None:
             self.fire.clear()
             self.score[g] += 1
+            self.ai_update_difficulty()
             self.scorer = g
             self.flash(f"¡¡GOOOOL de {self.teams[g]}!!", 2.0)
             self.snd.play("gol", self.teams[g], 2.6)
@@ -2067,7 +2088,7 @@ class Game(FireAbility, TournamentView):
             self.move_aim(d * 14)
 
     def move_aim(self, dy):
-        self.aim_y = min(max(self.aim_y + dy, GY0 - 25), GY1 + 25)
+        self.aim_y = min(max(self.aim_y + dy, PEN_GY0 - 25), PEN_GY1 + 25)
         # el balón también se desliza hacia ese lado
         self.ball.y = MY + (self.aim_y - MY) * 0.35
 
@@ -2116,7 +2137,7 @@ class Game(FireAbility, TournamentView):
 
     def ai_penalty(self, dive_y):
         self.keeper.vy = max(-9, min(9, (dive_y - MY) * 0.09))
-        ty = random.uniform(GY0 + 8, GY1 - 8) + random.gauss(0, 18)
+        ty = random.uniform(PEN_GY0 + 8, PEN_GY1 - 8) + random.gauss(0, 18)
         dx, dy = FX1 + 30 - self.ball.x, ty - self.ball.y
         d = math.hypot(dx, dy)
         sp = random.uniform(13, 17)
@@ -2143,14 +2164,14 @@ class Game(FireAbility, TournamentView):
             if user_keeps:                              # la CPU apunta y tira tras un instante
                 if self.ai_kick_at is None:
                     self.ai_kick_at = now + random.uniform(1.2, 2.0)
-                    self.ai_target = random.uniform(GY0 + 8, GY1 - 8) + random.gauss(0, 14)
+                    self.ai_target = random.uniform(PEN_GY0 + 8, PEN_GY1 - 8) + random.gauss(0, 14)
                 elif now >= self.ai_kick_at:
                     self.cpu_kick()
         self.gk_update(sl)
         if not self.moving and not self.dash:
             return
         catcher = self.keeper if (user_keeps and self.moving and self.held is None) else None
-        caught = step(self.bodies, self.ball, sl, self.gk_zone_factor, catcher)
+        caught = step(self.bodies, self.ball, sl, self.gk_zone_factor, catcher, goal=(PEN_GY0, PEN_GY1, PEN_GD))
         if caught:
             self.on_catch(self.keeper)
         self.gk_after_step()
@@ -2161,7 +2182,7 @@ class Game(FireAbility, TournamentView):
             return
         self.frames += sl
         b = self.ball
-        if b.x - b.r > FX1 and GY0 < b.y < GY1:
+        if b.x - b.r > FX1 and PEN_GY0 < b.y < PEN_GY1:
             self.pen_result(True)
         elif b.speed() == 0 or self.frames > 300 or (b.vx < -0.5 and b.x < FX1 - 160):
             self.pen_result(False)
@@ -2211,7 +2232,7 @@ class Game(FireAbility, TournamentView):
             inx = FX1 - SMALL_W - m <= b.x <= FX1 + m
         else:
             inx = FX0 - m <= b.x <= FX0 + SMALL_W + m
-        return 1.0 if (inx and abs(b.y - MY) <= SMALL_H + m) else GK_OUT_SPEED
+        return 1.0 if (inx and abs(b.y - MY) <= SMALL_H * (PEN_GOAL_SCALE if self.state == "pens" else 1) + m) else GK_OUT_SPEED
 
     def anchor_keeper(self):
         k = self.ctrl_keeper()
@@ -2267,7 +2288,7 @@ class Game(FireAbility, TournamentView):
             self.anchor_keeper()
         dist = DASH_MIN + (DASH_MAX - DASH_MIN) * p
         if self.state == "pens":
-            lo, hi = GY0 - 30, GY1 + 30
+            lo, hi = PEN_GY0 - 30*PEN_GOAL_SCALE, PEN_GY1 + 30*PEN_GOAL_SCALE
         else:
             lo, hi = FY0 + k.r, FY1 - k.r
         ty = min(max(k.y + d * dist, lo), hi)
@@ -2657,6 +2678,7 @@ class Game(FireAbility, TournamentView):
 
     def draw_pitch(self):
         cv=self.cv
+        gy0, gy1, depth = (PEN_GY0, PEN_GY1, PEN_GD) if self.state == "pens" else (GY0, GY1, GD)
         cv.create_rectangle(0, 0, self.cw, self.ch, fill="#08401f", width=0)
         stripe = (FX1 - FX0) / 10
         for i in range(10):
@@ -2674,21 +2696,21 @@ class Game(FireAbility, TournamentView):
             self.rect_w(line, MY - 150, line - side * 150, MY + 150, **L)
             self.rect_w(line, MY - 70, line - side * 55, MY + 70, **L)
             self.circle_w(line - side * 105, MY, 3, fill="#ffffff", width=0)
-            back = line + side * GD
-            self.rect_w(line, GY0, back, GY1, fill="#e8e8e8", outline="#ffffff", width=lw)
+            back = line + side * depth
+            self.rect_w(line, gy0, back, gy1, fill="#e8e8e8", outline="#ffffff", width=lw)
             for k in range(1, 7):                                   # red
-                yy = GY0 + k * GOAL_H / 7
+                yy = gy0 + k * (gy1-gy0) / 7
                 self.line_w(line, yy, back, yy, fill="#9a9a9a", width=1)
             for k in range(1, 4):
-                xx = line + side * GD * k / 4
-                self.line_w(xx, GY0, xx, GY1, fill="#9a9a9a", width=1)
-            self.circle_w(line, GY0, 4, fill="#ffffff", width=0)
-            self.circle_w(line, GY1, 4, fill="#ffffff", width=0)
+                xx = line + side * depth * k / 4
+                self.line_w(xx, gy0, xx, gy1, fill="#9a9a9a", width=1)
+            self.circle_w(line, gy0, 4, fill="#ffffff", width=0)
+            self.circle_w(line, gy1, 4, fill="#ffffff", width=0)
 
 
     def draw_pens_overlay(self):
         cv, u = self.cv, self.u
-        top = self.oy + (WX1 - PEN_X0) * self.s
+        top = self.oy + (PEN_WX1 - PEN_X0) * self.s
         cv.create_rectangle(0, top, self.cw, self.ch, fill="#062612", width=0)
         self.pen_btns = []
         user_kicks = self.pen_k % 2 == 0

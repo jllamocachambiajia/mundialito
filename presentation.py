@@ -81,10 +81,13 @@ class VisualResources:
         elapsed = now-self.gif_started
         index = min(len(self.frames)-1, bisect.bisect_right(self.timings, elapsed))
         g = self.game
-        size = min(g.cw*.27, g.ch*.2, 170)
+        # Preserve original frames and timing. Fit the square over the entire
+        # viewport; begin its reveal at the bottom, where the original burst rises.
+        size = max(g.cw, g.ch)
+        alpha = min(1, max(0, elapsed/.16)) * min(1, max(0, (self.gif_until-now)/.25)) * .65
         with g.cv.canvas:
-            Color(1,1,1,1)
-            Rectangle(texture=self.frames[index], pos=((g.cw-size)/2, g.ch-g.hud-size),size=(size,size))
+            Color(1,1,1,alpha)
+            Rectangle(texture=self.frames[index], pos=((g.cw-size)/2, 0),size=(size,size))
 
     def transition(self, action):
         if self.transitioning:

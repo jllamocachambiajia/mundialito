@@ -126,6 +126,13 @@ class TournamentView:
     def asset_path(self, name):
         return asset('sounds','effects',name)
 
+    def fragment_team(self, team):
+        """Update every historical representation, not just the losing node."""
+        for stage, row in enumerate(self.bracket_levels):
+            for index, represented in enumerate(row):
+                if represented == team and (stage, index) not in self.broken:
+                    self.broken[(stage, index)] = (team, make_fragments(random.randrange(3), random))
+
     @screen_change
     def orient_bracket(self, mode):
         self.bracket_orientation = mode
@@ -177,7 +184,7 @@ class TournamentView:
             loser = 2*i + (1 if w == a else 0)
             if not mine or winner == self.user:
                 team = b if w == a else a
-                self.broken[(stage,loser)] = (team, make_fragments(random.randrange(3), random))
+                self.fragment_team(team)
             event = dict(stage=stage, src=src, dest=i, loser=loser,
                          team=w, mine=mine, losing=mine and w != self.user,
                          champion=mine and w == self.user and stage == 3)
@@ -191,6 +198,8 @@ class TournamentView:
         if winner == self.user and stage < 3:
             self.round += 1
         self.music.stop()
+        if self.bracket_sound:
+            self.bracket_sound.stop()
         self.state = 'bracket'
         self.recalc()
         self.next_bracket_event()
@@ -216,7 +225,7 @@ class TournamentView:
         if event and not event['advance_audio']:
             event['advance_audio']=True
             event['elapsed']=0.0
-            # Confirmation is emitted by the actual arrival event, not a timer before it.
+            # Transition completion only enables motion; audio follows path progress.
 
     def start_defeat_music(self):
         if not getattr(self.snd,'on',True):return
@@ -235,10 +244,15 @@ class TournamentView:
             return
         e['elapsed'] += max(0,dt)
         t = e['elapsed']
+        progress = min(1, t/e['travel_duration'])
+        if not e['losing'] and progress >= 1/3 and not e['sound_started']:
+            e['sound_started'] = True
+            self.play_bracket_sound('avanzar_nivel.wav')
         if t >= e['travel_duration'] and not e['arrived']:
             self.bracket_levels[e['stage']+1][e['dest']] = e['team']
             e['arrived'] = True
-            self.play_bracket_sound('avanzar_nivel.wav')
+            if self.bracket_sound:
+                self.bracket_sound.stop()
             self.bracket_dirty = True
         if e['losing']:
             zoom_start = e['duration']+2
@@ -250,8 +264,7 @@ class TournamentView:
                 e['sound_started'] = True
                 self.music.stop()
                 self.play_bracket_sound('perder.wav')
-                key = (e['stage'], e['loser'])
-                self.broken[key] = (self.user, make_fragments(random.randrange(3),random))
+                self.fragment_team(self.user)
             if t >= fall_start+self.defeat_duration+.25:
                 if self.bracket_sound: self.bracket_sound.stop()
                 self.bracket_event = None
@@ -259,8 +272,8 @@ class TournamentView:
                 self.bracket_lost = True
                 self.bracket_dirty = True
         elif e['champion']:
-            if t >= e['duration'] and not e['sound_started']:
-                e['sound_started'] = True
+            if t >= e['duration'] and not e.get('champion_sound_started'):
+                e['champion_sound_started'] = True
                 self.snd.play('campeon',self.user,9)
                 if hasattr(self,'visual'):self.visual.show_goal(3)
             if t >= e['duration']+7:
