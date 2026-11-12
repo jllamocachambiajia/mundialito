@@ -191,7 +191,20 @@ class FireAbility:
                 self.snd.play('fuego', dur=.2)
                 return True
         return False
+    def fire_goal_ai(self, body):
+        """v11: la CPU prepara el tiro con efecto para un intento a portería, sin depender de la
+        posición del arquero. La habilidad no cambia: solo se decide cuándo usarla."""
+        from main import vnow
+        if body.keeper or self.kick_team == 0:
+            return False
+        if self.fire.selected(body):
+            return True
+        if self.fire.arm(1, vnow()) and self.fire.select(body, vnow()):
+            self.snd.play('fuego', dur=.2)
+            return True
+        return False
 
+                                                             
     def draw_fire_aura(self):
         from main import FX0, FX1, FY0, FY1
         if self.fire.shots:
