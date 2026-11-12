@@ -1076,7 +1076,7 @@ def collide(a, b):
     b.vx += j * nx / b.m; b.vy += j * ny / b.m
 
 
-def step(bodies, ball, scale=1.0, zone=None, catcher=None, limit=None, touch=None, collision_policy=None, goal=None):
+def step(bodies, ball, scale=1.0, zone=None, catcher=None, limit=None, touch=None, collision_policy=None, goal=None, body_scale=None):
     """Avanza la física un fotograma.
     scale: velocidad del tiempo (0,75 = cámara lenta). zone(b): factor de velocidad del arquero
     según esté dentro/fuera del área chica. catcher: arquero que puede atrapar el balón.
@@ -1085,14 +1085,20 @@ def step(bodies, ball, scale=1.0, zone=None, catcher=None, limit=None, touch=Non
     Devuelve True si `catcher` atrapó el balón en este fotograma."""
     caught = False
     for _ in range(SUB):
-        for b in bodies:
+                for b in bodies:
             k = scale / SUB
+            if body_scale is not None:
+                f_b = body_scale(b)
+                if f_b == 0.0:
+                    b.vx = b.vy = 0.0          # rival congelado: no se desliza
+                k *= f_b
             if zone is not None and b.keeper:
                 k *= zone(b)
             b.x += b.vx * k; b.y += b.vy * k
             walls(b, b is ball, goal)
             if limit is not None and b.keeper:
                 limit(b)
+                
         if touch is not None and not touch["hit"]:
             tk_ = touch["k"]
             if math.hypot(ball.x - tk_.x, ball.y - tk_.y) <= tk_.r + ball.r + 1.0:
@@ -1951,17 +1957,18 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
         self.ai_update_difficulty()
         self.fire_update(dt)
         # Fire (0.5) and PAUSA (0.15) never multiply: the lowest active one wins.
-        fire_scale = combined_scale(self.fire.scale(dt), self.pausa_scale())
+                fire_scale = self.fire.scale(dt)               # física: fuego (PAUSA va por cuerpo)
         lim = self.keeper_limit                        # v8: barrera del área grande
         if self.phase == "goal":
-            step(self.bodies, self.ball, fire_scale, None, None, lim)
+            step(self.bodies, self.ball, fire_scale, None, None, lim, body_scale=self.pausa_body_scale)
             if now >= self.resume_at:
                 self.reset_positions()
                 if not self.check_period():
                     self.kickoff(1 - self.scorer)
             return
-        sl = min(self.slowmo(), fire_scale)
-        self.clock += dt * sl                           # cronómetro automático (tiempo de juego)
+        sl = min(self.slowmo(), fire_scale)            # física sin PAUSA
+        self.clock += dt * min(sl, self.pausa_scale()) # cronómetro: también al 60 % con PAUSA
+# cronómetro automático (tiempo de juego)
         if self.check_period():
             return
         touch = None
@@ -1970,7 +1977,7 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
             flight = next((s for s in self.fire.shots.values() if s['phase'] == 'flight'), None)
             if flight and not self.fire.keeper_blocks(flight, touch['k'], (FX0+FX1)/2):
                 touch = None
-        step(self.bodies, self.ball, sl, None, None, lim, touch, self.fire_collision)
+        step(self.bodies, self.ball, sl, None, None, lim, touch, self.fire_collision, body_scale=self.pausa_body_scale)  
         self.fire_update(0)
         if touch and touch["hit"]:                      # bloqueo + rebote: velocidad normal
             self.gk_mode = False
