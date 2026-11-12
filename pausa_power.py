@@ -10,7 +10,7 @@ SPEED = 0.15                 # multiplicador de simulación durante PAUSA
 DURATION = 10.0              # segundos reales (respetan el botón de pausa del juego)
 PLAYER_RECHARGE = 60.0       # jugador humano, cualquier ronda
 AI_RECHARGE = 60.0           # CPU en dificultad normal
-AI_FURY_RECHARGE = {2: 65.0, 3: 70.0}   # MODO FURIA: semifinal / final
+AI_FURY_RECHARGE = {2: 50.0, 3: 40.0}   # MODO FURIA: semifinal / final
 PARTICLES = 90
 
 
