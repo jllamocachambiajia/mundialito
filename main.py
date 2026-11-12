@@ -1082,10 +1082,11 @@ def step(bodies, ball, scale=1.0, zone=None, catcher=None, limit=None, touch=Non
     según esté dentro/fuera del área chica. catcher: arquero que puede atrapar el balón.
     limit(b): barrera del área grande (solo se llama para arqueros).
     touch: dict {"k": arquero, "hit": False}; marca hit=True si ese arquero toca el balón.
+    body_scale(b): factor por cuerpo (PAUSA). 0 = congelado.
     Devuelve True si `catcher` atrapó el balón en este fotograma."""
     caught = False
     for _ in range(SUB):
-                for b in bodies:
+        for b in bodies:
             k = scale / SUB
             if body_scale is not None:
                 f_b = body_scale(b)
@@ -1098,7 +1099,6 @@ def step(bodies, ball, scale=1.0, zone=None, catcher=None, limit=None, touch=Non
             walls(b, b is ball, goal)
             if limit is not None and b.keeper:
                 limit(b)
-                
         if touch is not None and not touch["hit"]:
             tk_ = touch["k"]
             if math.hypot(ball.x - tk_.x, ball.y - tk_.y) <= tk_.r + ball.r + 1.0:
@@ -1119,7 +1119,7 @@ def step(bodies, ball, scale=1.0, zone=None, catcher=None, limit=None, touch=Non
         if b.speed() < 0.06:
             b.vx = b.vy = 0.0
     return caught
-
+    
 
 def mix(c1, c2, t):
     t = min(1.0, max(0.0, t))
