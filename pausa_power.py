@@ -5,7 +5,8 @@ keep running on the pause-aware real clock (vnow), never on simulated time.
 """
 import math
 import random
-
+OWNER_SPEED = 0.6            # Velocidad suave para el que USÓ la pausa
+RIVAL_SPEED = 0.0            # Velocidad del rival (completamente quieto)
 SPEED = 0.15                 # multiplicador de simulación durante PAUSA
 DURATION = 10.0              # segundos reales (respetan el botón de pausa del juego)
 PLAYER_RECHARGE = 60.0       # jugador humano, cualquier ronda
@@ -48,6 +49,13 @@ class PausaState:
     def scale(self, now):
         self.expire(now)
         return SPEED if self.active(now) else 1.0
+        def team_scale(self, team, now):
+        """Retorna la velocidad según si el equipo es el dueño de la pausa o el rival."""
+        self.expire(now)
+        if self.active(now):
+            return OWNER_SPEED if self.owner == team else RIVAL_SPEED
+        return 1.0
+    
 
 
 def combined_scale(*multipliers):
