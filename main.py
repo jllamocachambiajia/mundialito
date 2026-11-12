@@ -1813,57 +1813,62 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
         v = min(max(v, cap * 0.35), cap)
         ang = math.atan2(py, px) + random.gauss(0, noise)
         self.shoot(p, math.cos(ang) * v, math.sin(ang) * v)
-
     def ai_shoot(self):
-        """Jugadores de campo de la CPU (el arquero NUNCA participa aquí)."""
+        """v11: CPU de campo. Tiro a portería con la máxima potencia y tiro con efecto si está listo.
+        Pases hacia adelante con potencia variable, rebote, pase atrás solo con compañero en su vector,
+        empuje al rival que va por el balón suelto, o espera."""
+        now = vnow()
         b = self.ball
-        bx, by = self.predict(b, 22)
+        hard = self.ai_hard()
         field = [p for p in self.bodies if p.team == 1 and not p.keeper]
-        noise = (100 - rating(self.teams[1])) * (0.001 if self.ai_hard() else 0.005)
+        noise = (100 - rating(self.teams[1])) * (0.001 if hard else 0.005)
+        cap = MAX_DRAG * POWER * self.cpu_normal_factor()
         plan = self.ai_fire_plan(field)
         if plan is not None:
             _, special_player, sx, sy, gy, bank = plan
-            if self.fire_ai(special_player, "tiro", math.hypot(sx-FX0, sy-MY)):
-                # Transfer follows this real disc vector, with no pass offset or angular noise.
-                dx, dy = sx-special_player.x, sy-special_player.y
+            if self.fire_ai(special_player, "tiro", math.hypot(sx - FX0, sy - MY)):
+                dx, dy = sx - special_player.x, sy - special_player.y
                 distance = math.hypot(dx, dy)
-                self.shoot(special_player, dx/distance*MAX_DRAG*POWER*POWER_FACTOR, dy/distance*MAX_DRAG*POWER*POWER_FACTOR)
+                self.shoot(special_player, dx / distance * MAX_DRAG * POWER * self.cpu_fire_factor(),
+                           dy / distance * MAX_DRAG * POWER * self.cpu_fire_factor())
                 return
-        cap = MAX_DRAG * POWER
+        # 1) rival que va por el balón suelto: a veces lo empujamos en vez de tirar al balón
+        if b.speed() < 5 and random.random() < (0.7 if hard else 0.45) and self.push_rival(field):
+            return
+        bx, by = self.predict(b, 22)
         ukeep = next((p for p in self.bodies if p.team == 0 and p.keeper), None)
-        # 1) objetivo: portería (apuntando lejos del arquero) o pase a un compañero mejor ubicado
-        gdist = math.hypot(bx - FX0, by - MY)
         if ukeep is not None and ukeep.y > MY:
             gy = random.uniform(GY0 + 12, MY - 10)
         elif ukeep is not None:
             gy = random.uniform(MY + 10, GY1 - 12)
         else:
             gy = MY + random.uniform(-45, 45)
-        target, kind, recv = (FX0 - 15, gy), "tiro", None
-        if gdist > (480 if self.ai_hard() else 300) or not self.lane_free(bx, by, FX0, gy, 1):
-            best_m, best_s = None, (gdist * 0.9 if gdist <= 480 else 1e9)
-            for m in field:
-                d = math.hypot(m.x - bx, m.y - by)
-                if d < 90 or d > 460:                    # ni demasiado cerca ni demasiado lejos
-                    continue
-                if m.x > bx + 40 and gdist < 600:        # pases hacia atrás solo si estamos lejos
-                    continue
-                if not self.lane_free(bx, by, m.x, m.y, 1):
-                    continue
-                press = min((math.hypot(o.x - m.x, o.y - m.y) for o in self.bodies
-                             if o.team == 0), default=999)
-                s = math.hypot(m.x - FX0, m.y - MY) + d * 0.25 - min(press, 120) * 0.8
-                if s < best_s:
-                    best_m, best_s = m, s
-            if best_m is not None and random.random() < (0.95 if self.ai_hard() else 0.8):
-                lead = 25 if best_m.x > FX0 + 60 else 0
-                target, kind, recv = (best_m.x - lead, best_m.y), "pase", best_m
+        gdist = math.hypot(bx - FX0, by - MY)
+        recv = None
+        # 2) intento a portería si el carril está libre
+        if gdist <= (480 if hard else 300) and self.lane_free(bx, by, FX0, gy, 1):
+            target, kind = (FX0 - 15, gy), "tiro"
+        else:
+            # 3) pase hacia adelante, hacia donde estará el compañero (menos frecuente que antes)
+            best_m = self.best_forward(field, bx, by)
+            if best_m is not None and random.random() < (0.6 if hard else 0.45):
+                target, kind, recv = self.lead_point(best_m, b.x, b.y), "pase", best_m
+            else:
+                # 4) rebote en banda, o 5) pase atrás solo si hay un compañero en su vector
+                bank = self.bank_point(bx, by, gy)
+                blocker = self.own_blocker(bx, by)
+                if bank is not None and random.random() < 0.5:
+                    target, kind = bank, "tiro"
+                elif blocker is not None and random.random() < (0.8 if hard else 0.6):
+                    target, kind, recv = self.lead_point(blocker, b.x, b.y), "pase", blocker
+                else:
+                    self.ai_at = now + random.uniform(0.2, 0.4)   # espera sin disparar
+                    return
         tx, ty = target
         dx, dy = tx - bx, ty - by
         d = math.hypot(dx, dy) or 1
         ux, uy = dx / d, dy / d
         ax, ay = bx - ux * (PR + BR - 3), by - uy * (PR + BR - 3)
-        # 2) quién golpea: el que mejor llega por detrás del balón (y no es el receptor)
         best, bscore = None, 1e9
         for p in field:
             if p is recv:
@@ -1874,24 +1879,19 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
             if score < bscore:
                 best, bscore = p, score
         if best is None:
+            self.ai_at = now + random.uniform(0.2, 0.4)
             return
-        # 3) potencia
         if kind == "tiro":
-            close = max(0.0, min(1.0, 1 - (gdist - 120) / 420))
-            ball_v = cap * 1.44 * random.uniform(0.72 + 0.2 * close, 0.95 + 0.05 * close)
-            ball_v = max(ball_v, cap * 1.44 * (0.95 if self.ai_hard() else 0.7))           # nada de tiros flojos
+            # máxima potencia: entre el 90 % y el 100 % del tiro normal más fuerte
+            ball_v = cap * 1.44 * random.uniform(0.9, 1.0)
+            if random.random() < (1.0 if hard else 0.9):
+                self.fire_goal_ai(best)                  # tiro con efecto si está listo
         else:
-            ball_v = d * (1 - FRICTION) * random.uniform(1.15, 1.35) + 2.0
-        # 4) si el balón está lejísimos y en nuestra mitad, un defensor se reubica (cubre espacio)
-        if not self.ai_hard() and math.hypot(ax - best.x, ay - best.y) > 420 and b.x > (FX0 + FX1) / 2 and random.random() < 0.5:
-            back = max(field, key=lambda p: p.x)
-            cx, cy = (b.x + FX1) / 2, (b.y + MY) / 2
-            dd = math.hypot(cx - back.x, cy - back.y)
-            if dd > 40:
-                v = min(dd * (1 - PLAYER_FRICTION), cap * 0.8)
-                self.shoot(back, (cx - back.x) / dd * v, (cy - back.y) / dd * v)
-                return
+            # pase con potencia variable: a veces más suave, a veces más fuerte, sin pasar del 85 %
+            needed = d * (1 - FRICTION) * random.uniform(0.92, 1.12) + 2.0
+            ball_v = min(needed, cap * 1.44 * 0.85)
         self.strike(best, ax, ay, ball_v, noise)
+    
 
     def gk_target(self, k):
         """v10: a dónde va el arquero CPU: intercepta tiros, sale a despejar balones sueltos
@@ -1918,13 +1918,33 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
         return gx + sgn * off, MY + (b.y - MY) * f, False
 
     def ai_keeper(self):
-        """v10: arquero CPU que revisa el balón cada fotograma y acelera suavemente.
-        Ya no espera la recarga de 1 s ni se mueve con un solo empujón."""
+        """v11: arquero CPU. Toma el balón que le llega y lo saca a un compañero con potencia real;
+        si no, revisa el balón cada fotograma y acelera suavemente hacia su posición."""
         k = next((p for p in self.bodies if p.team == 1 and p.keeper), None)
         if k is None or self.state != "match" or self.phase != "play":
             return
         now = vnow()
-        if now >= self.ai_gk_at or self.gk_tx is None:
+        b = self.ball
+        if (math.hypot(b.x - k.x, b.y - k.y) <= k.r + b.r + 3 and b.speed() < 6
+                and self.can_shoot(1, now) and random.random() < (0.85 if self.ai_hard() else 0.6)):
+            mates = [p for p in self.bodies if p.team == 1 and not p.keeper]
+            best, bs = None, 1e9
+            for m in mates:
+                if not self.lane_free(b.x, b.y, m.x, m.y, 1):
+                    continue
+                tx, ty = self.lead_point(m, b.x, b.y)
+                s = math.hypot(tx - FX0, ty - MY)          # el compañero más adelantado
+                if s < bs:
+                    best, bs = (tx, ty), s
+            if best is not None:
+                dx, dy = best[0] - b.x, best[1] - b.y
+                d = math.hypot(dx, dy) or 1
+                cap = MAX_DRAG * POWER * self.cpu_normal_factor() * 0.8   # saque fuerte, no al máximo
+                v = min(cap * 1.44, d * (1 - FRICTION) * random.uniform(0.95, 1.1) + 2.0)
+                b.vx, b.vy = dx / d * v, dy / d * v        # el arquero saca el balón a un compañero
+                self.next_shot_at[1] = now + COOLDOWN
+                return
+        if self.gk_tx is None or now >= self.ai_gk_at:
             tx, ty, urgent = self.gk_target(k)
             if urgent and not self.gk_urgent and self.gk_tx is not None:
                 # tiro nuevo: reacciona con un instante de retraso, como una persona
@@ -1944,6 +1964,7 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
         want = min(vmax, d * GK_CPU_BRAKE)
         k.vx += (dx / d * want - k.vx) * GK_CPU_ACCEL
         k.vy += (dy / d * want - k.vy) * GK_CPU_ACCEL
+                
         
 
     # ---------------- barrera del área grande (solo arqueros)
