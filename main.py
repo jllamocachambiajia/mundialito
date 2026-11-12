@@ -68,7 +68,12 @@ SLOWMO = 0.75                                    # cámara lenta del arquero en 
 # --- v8: arquero en partido / prórroga
 SLOWMO_MATCH = 0.50                              # cámara lenta al arrastrar al arquero
 BIG_W, BIG_H = 150, 150                          # área grande (profundidad, media altura): barrera
-GK_POWER = 0.50                                  # potencia máxima del arquero = 50 % de la de campo
+GK_POWER = 0.50 # potencia máxima del arquero = 50 % de la de campo
+# --- v10: IA del arquero CPU
+GK_CPU_SPEED = 7.0                               # velocidad normal (px por fotograma)
+GK_CPU_SPEED_URGENT = 12.0                       # al lanzarse a un tiro
+GK_CPU_BRAKE = 0.25                              # frena al acercarse a su objetivo
+GK_CPU_ACCEL = 0.25                              # aceleración suave por fotograma
 GK_SLOW_MAX = 3.0                                # seguro: s reales máx. de cámara lenta tras soltar
 DASH_CHARGE = 0.5                                # s para llegar a potencia máxima
 DASH_MIN, DASH_MAX = 22, 150                     # distancia del DASH (mundo)
@@ -1889,43 +1894,57 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
         self.strike(best, ax, ay, ball_v, noise)
 
     def gk_target(self, k):
-        """Punto al que debe ir un arquero: intercepta trayectorias o cubre el ángulo."""
+        """v10: a dónde va el arquero CPU: intercepta tiros, sale a despejar balones sueltos
+        en su área grande o vuelve a su posición base, adelantándose según el balón."""
         b = self.ball
         right = k.team == 1
         line = FX1 if right else FX0
+        sgn = -1 if right else 1                         # hacia dentro de la cancha
+        gx = line + sgn * 28                             # línea de gol del arquero
         toward = (b.vx > 0.3) if right else (b.vx < -0.3)
-        gx = line - 28 if right else line + 28
         if toward:
-            # trayectoria del balón hasta la x del arquero (con rebotes en bandas)
             t = (k.x - b.x) / b.vx
             if t > 0:
-                y = b.y + b.vy * t
+                y = b.y + b.vy * t                       # trayectoria con rebotes en bandas
                 h = FY1 - FY0
                 y = (y - FY0) % (2 * h)
                 y = FY0 + (y if y <= h else 2 * h - y)
                 return gx, y, True
         dpen = abs(b.x - line)
-        if dpen < BIG_W - 5 and abs(b.y - MY) < BIG_H and b.speed() < 3:
-            return b.x, b.y, False                   # balón suelto en su área: salir a despejar
-        f = 0.25 + 0.35 * max(0.0, 1 - dpen / 600)
-        return gx + (-1 if right else 1) * min(60, max(0, 300 - dpen) * 0.2), MY + (b.y - MY) * f, False
+        if dpen < BIG_W and abs(b.y - MY) < BIG_H and b.speed() < 4:
+            return b.x, b.y, False                       # balón suelto en su área: sale a despejarlo
+        f = 0.3 + 0.4 * max(0.0, 1 - dpen / 500)         # posición base: sigue al balón con cautela
+        off = min(25, max(0.0, 300 - dpen) * 0.1)        # se adelanta si el balón está cerca
+        return gx + sgn * off, MY + (b.y - MY) * f, False
 
     def ai_keeper(self):
+        """v10: arquero CPU que revisa el balón cada fotograma y acelera suavemente.
+        Ya no espera la recarga de 1 s ni se mueve con un solo empujón."""
         k = next((p for p in self.bodies if p.team == 1 and p.keeper), None)
-        if k is None:
+        if k is None or self.state != "match" or self.phase != "play":
             return
-        tx, ty, urgent = self.gk_target(k)
-        tx, ty = self.clamp_area(k, tx, ty)
-        dx, dy = tx - k.x, ty - k.y
+        now = vnow()
+        if now >= self.ai_gk_at or self.gk_tx is None:
+            tx, ty, urgent = self.gk_target(k)
+            if urgent and not self.gk_urgent and self.gk_tx is not None:
+                # tiro nuevo: reacciona con un instante de retraso, como una persona
+                self.gk_urgent = True
+                self.ai_gk_at = now + (0.05 if self.ai_hard() else random.uniform(0.12, 0.22))
+                return
+            self.gk_urgent = urgent
+            tx, ty = self.clamp_area(k, tx, ty)
+            err = 0.0 if self.ai_hard() else (100 - rating(self.teams[1])) * 0.12   # error leve, en px
+            self.gk_tx, self.gk_ty = tx, ty + random.gauss(0, err)
+            self.ai_gk_at = now + random.uniform(0.06, 0.12)
+        dx, dy = self.gk_tx - k.x, self.gk_ty - k.y
         d = math.hypot(dx, dy)
-        if d < (8 if urgent else 16):
-            self.ai_gk_at = vnow() + random.uniform(0.15, 0.3)
+        if d < 2:
             return
-        cap = MAX_DRAG * POWER * GK_POWER
-        v = min(cap, d * (1 - PLAYER_FRICTION) * (1.35 if urgent else 1.05))
-        err = (100 - rating(self.teams[1])) * (0.001 if self.ai_hard() else 0.004)
-        a = math.atan2(dy, dx) + random.gauss(0, err)
-        self.shoot(k, math.cos(a) * v, math.sin(a) * v)
+        vmax = GK_CPU_SPEED_URGENT if self.gk_urgent else GK_CPU_SPEED
+        want = min(vmax, d * GK_CPU_BRAKE)
+        k.vx += (dx / d * want - k.vx) * GK_CPU_ACCEL
+        k.vy += (dy / d * want - k.vy) * GK_CPU_ACCEL
+        
 
     # ---------------- barrera del área grande (solo arqueros)
     def clamp_area(self, k, x, y):
@@ -2008,8 +2027,8 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
         self.pausa_ai()
         if self.can_shoot(1, now) and now >= self.ai_at:
             self.ai_shoot()
-        if self.can_shoot(1, now, True) and now >= self.ai_gk_at:   # IA del arquero, independiente
-            self.ai_keeper()
+        self.ai_keeper()                                             # v10: arquero CPU en cada fotograma
+        
             
 
     @screen_change
@@ -2229,6 +2248,9 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
         self.gk_ax = self.gk_ay = 0.0
         self.gk_btns = []
         self.gk_released_at = None  # v8: momento en que se soltó al arquero arrastrado
+        self.gk_tx = self.gk_ty = None   # v10: destino actual del arquero CPU
+        self.gk_urgent = False           # v10: reaccionando a un tiro
+        
 
     def ctrl_keeper(self):
         """Arquero que controla el usuario."""
@@ -2255,6 +2277,8 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
 
     def gk_zone_factor(self, b):
         """Arquero: velocidad normal dentro de su área chica, 10 % fuera de ella."""
+        if self.state == "match" and b.team == 1:
+            return 1.0                  # v10: el arquero CPU se mueve normal en toda su área grande        
         right = self.state == "pens" or b.team == 1
         m = b.r * 0.5
         if right:
