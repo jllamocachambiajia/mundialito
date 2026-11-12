@@ -251,8 +251,7 @@ class TournamentView:
         if t >= e['travel_duration'] and not e['arrived']:
             self.bracket_levels[e['stage']+1][e['dest']] = e['team']
             e['arrived'] = True
-            if self.bracket_sound:
-                self.bracket_sound.stop()
+            # The WAV keeps playing: the SIGUIENTE PARTIDO button is independent.
             self.bracket_dirty = True
         if e['losing']:
             zoom_start = e['duration']+2

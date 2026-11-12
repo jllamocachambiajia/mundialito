@@ -785,7 +785,7 @@ def gen_team(team):
 class Sound:
     """Reproductor sin pygame: Android (Pydroid 3, MediaPlayer), Windows, macOS y Linux."""
     PRIO = {"toque": 0, "uy": 1, "pito": 2, "pito_medio": 2, "penal": 3, "pito_final": 3,
-            "gol": 4, "gana": 4, "derrota": 4, "campeon": 5}
+            "gol": 4, "gana": 4, "derrota": 4, "campeon": 5, "pausa_inicio": 6}
 
     def __init__(self):
         self.on = True
@@ -795,7 +795,7 @@ class Sound:
         self.backend = self._detect()
         self.on_event = None
         self.files.update({('', k): asset('sounds', 'effects', k+'.wav')
-                           for k in ('pito','pito_medio','pito_final','toque','uy','derrota','fuego')})
+                           for k in ('pito','pito_medio','pito_final','toque','uy','derrota','fuego','pausa_inicio')})
         for team in TEAMS:
             for kind in ('gol','penal','gana','campeon'):
                 self.files[(team,kind)] = asset('sounds','victory',ABBR[team]+'_'+kind+'.wav')
@@ -1215,12 +1215,14 @@ from presentation import VisualResources, asset, screen_change
 
 
 from fire import FireAbility, POWER_FACTOR, ANDROID_SAFE_BOTTOM_DP
+from pausa_power import PausaAbility, combined_scale
+from abilities import AbilityBar, ability_layout
 
 
 from ai import RivalAI, ENHANCED_COOLDOWN
 
 
-class Game(RivalAI, FireAbility, TournamentView):
+class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
     def __init__(self, root):
         self.root = root
         root.title("Copa Mundial de Chapas")
@@ -1237,6 +1239,8 @@ class Game(RivalAI, FireAbility, TournamentView):
         self.keeper = None
         self.gk_reset()
         self.fire_reset()
+        self.pausa_reset()
+        self.ability_reset()
         if self.mobile:
             root.geometry(f"{sw}x{sh}+0+0")
             try:
@@ -1304,7 +1308,11 @@ class Game(RivalAI, FireAbility, TournamentView):
         # v7: franja inferior propia para los controles del arquero (no tapan la cancha)
         from kivy.metrics import dp
         self.safe_bottom = min(ch * .12, dp(ANDROID_SAFE_BOTTOM_DP)) if self.state == 'match' else 0
-        self.ctrl_pad = min(ch*.16, max(62, min(cw/5, PR*4*min(w/RW,h/RH))+16)) if self.state == 'match' else 0
+        if self.state == 'match':
+            # Ability buttons = 4 x disc diameter at the final pitch scale.
+            self.ability_size, self.ctrl_pad = ability_layout(cw, ch, self.hud, self.safe_bottom, self.rot, RW, RH, PR)
+        else:
+            self.ability_size, self.ctrl_pad = 0, 0
         h -= self.ctrl_pad + self.safe_bottom
         if self.rot:
             self.s = min(w / RH, h / RW)
@@ -1491,6 +1499,8 @@ class Game(RivalAI, FireAbility, TournamentView):
         if self.paused:
             self.drag = None
             self.fire_pressed = False
+            self.pausa_pressed = False
+            self.info_pressed = None
             self.pen_hold = 0
             self.music.pause()
         else:
@@ -1507,6 +1517,8 @@ class Game(RivalAI, FireAbility, TournamentView):
         self.pen_hold = 0
         self.gk_mode = False
         self.fire_reset()
+        self.pausa_reset()
+        self.ability_reset()
         self.music.stop()
         self.visual.gif_until = 0
         if getattr(self, 'defeat_music', None):
@@ -1610,10 +1622,16 @@ class Game(RivalAI, FireAbility, TournamentView):
     def start_match(self, opp):
         self.ai_reset()
         self.fire_reset()
+        self.pausa_reset()
+        self.ability_reset()
+        if getattr(self, 'bracket_sound', None):
+            self.bracket_sound.stop()                  # el avance suena completo hasta pulsar el botón
         self.visual.texture('fuego.png')
+        self.visual.texture('pausa.png')
         if self.snd.backend == 'kivy':
-            path = self.snd.files[('', 'fuego')]
-            self.snd.cache[path] = self.snd.SL.load(path)
+            for name in ('fuego', 'pausa_inicio'):
+                path = self.snd.files[('', name)]
+                self.snd.cache[path] = self.snd.SL.load(path)
         self.teams = [self.user, opp]
         self.snd.prepare(self.user, opp)
         # dorsales: arquero fijo con el 1, los de campo al azar y sin repetir
@@ -1695,7 +1713,8 @@ class Game(RivalAI, FireAbility, TournamentView):
         if sp > cap:
             vx, vy = vx / sp * cap, vy / sp * cap
         if special:
-            self.fire.launch(body, vx, vy, vnow(), self.round)
+            self.fire.launch(body, vx, vy, vnow(), self.round,
+                             None if body.team == 0 else self.ai_fire_recharge())
         if self.state == "match" and self.held is body:
             # el arquero con el balón: el arrastre lo suelta en esa dirección (el arquero no se mueve)
             self.release_ball(vx * 1.3, vy * 1.3)
@@ -1931,7 +1950,8 @@ class Game(RivalAI, FireAbility, TournamentView):
         now = vnow()
         self.ai_update_difficulty()
         self.fire_update(dt)
-        fire_scale = self.fire.scale(dt)
+        # Fire (0.5) and PAUSA (0.15) never multiply: the lowest active one wins.
+        fire_scale = combined_scale(self.fire.scale(dt), self.pausa_scale())
         lim = self.keeper_limit                        # v8: barrera del área grande
         if self.phase == "goal":
             step(self.bodies, self.ball, fire_scale, None, None, lim)
@@ -1980,6 +2000,7 @@ class Game(RivalAI, FireAbility, TournamentView):
             p, vx, vy = self.pending
             self.pending = None
             self.shoot(p, vx, vy)
+        self.pausa_ai()
         if self.can_shoot(1, now) and now >= self.ai_at:
             self.ai_shoot()
         if self.can_shoot(1, now, True) and now >= self.ai_gk_at:   # IA del arquero, independiente
@@ -1988,6 +2009,7 @@ class Game(RivalAI, FireAbility, TournamentView):
     @screen_change
     def match_over(self, pen_text=""):
         self.fire.clear()
+        self.pausa.finish()
         a, b = self.teams
         if pen_text:
             w = pen_text.split("gana ")[-1]
@@ -2023,6 +2045,7 @@ class Game(RivalAI, FireAbility, TournamentView):
     @screen_change
     def start_penalties(self):
         self.fire.clear()
+        self.pausa.finish()
         self.pens = [[], []]
         self.pen_k = 0
         self.state = "pens"
@@ -2483,7 +2506,7 @@ class Game(RivalAI, FireAbility, TournamentView):
                     cmd()
                     return
             return
-        if self.state == 'match' and self.fire_press(ev.x, ev.y):
+        if self.state == 'match' and self.ability_press(ev.x, ev.y):
             return
         if self.state == "pens":
             for x0, y0, x1, y1, d in self.pen_btns:
@@ -2543,7 +2566,7 @@ class Game(RivalAI, FireAbility, TournamentView):
         self.pen_hold = 0
         if self.paused:
             return
-        if self.state == 'match' and self.fire_release(ev.x, ev.y):
+        if self.state == 'match' and self.ability_release(ev.x, ev.y):
             return
         if self.gk_hold:                                # v7: soltar la flecha = DASH
             self.gk_release()
@@ -2623,11 +2646,22 @@ class Game(RivalAI, FireAbility, TournamentView):
                 self.draw_fire_ring(b, sx, sy, R)
             self.jersey(sx, sy, R, self.teams[b.team], b.keeper, b.team, b.num)
 
+        fx_now = vnow()
+        fx_dt = max(0.0, min(.1, fx_now - getattr(self, '_fx_last', fx_now)))
+        self._fx_last = fx_now
+        if self.state == 'match':
+            self.draw_pausa_effect(fx_dt)               # sobre las chapitas, bajo el balón
         # balón
         b = self.ball
         sx, sy = self.to_s(b.x, b.y)
-        R = b.r * self.s
-        cv.create_oval(sx - R + 2, sy - R + 3, sx + R + 2, sy + R + 3, fill="#062b14", width=0)
+        R0 = b.r * self.s
+        lift_scale = self.fire_ball_scale(fx_dt) if self.state == 'match' else 1.0
+        R = R0 * lift_scale                             # solo dibujo: radio físico intacto
+        lift = (lift_scale - 1.0) * R0 * 2.2
+        shadow = R0 * (1 + .25 * (lift_scale - 1))
+        cv.create_oval(sx - shadow + 2 + lift * .35, sy - shadow + 3 + lift * .2, sx + shadow + 2 + lift * .35,
+                       sy + shadow + 3 + lift * .2, fill="#062b14", width=0, alpha=1 - .45 * (lift_scale - 1))
+        sy -= lift
         cv.create_oval(sx - R, sy - R, sx + R, sy + R, fill="#ffffff", outline="#111111", width=max(1, R * 0.12))
         rot = (b.x + b.y) * 0.08
         for k in range(5):
@@ -2654,7 +2688,7 @@ class Game(RivalAI, FireAbility, TournamentView):
             self.draw_pens_overlay()
         self.draw_hud()
         if self.state == 'match':
-            self.draw_fire_button()
+            self.draw_abilities()
         self.draw_pause_button()
 
         cd = self.countdown()[0] if self.state == "pens" and self.pen_wait and not self.lock else None

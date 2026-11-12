@@ -6,7 +6,7 @@ AI_RECHARGE = (20.0, 20.0, 10.0, 5.0)
 POWER_FACTOR = 1.5
 TIME_FACTOR = .5
 MAX_DURATION = 2.0
-ANDROID_SAFE_BOTTOM_DP = 56
+ANDROID_SAFE_BOTTOM_DP = 72          # margen extra para la barra de navegación (Motorola, etc.)
 
 
 class FireState:
@@ -39,11 +39,14 @@ class FireState:
                                 started=now, velocity=(0, 0))
         return True
 
+    def selected_team(self, team):
+        return self.shots.get(team) is not None
+
     def selected(self, body):
         shot = self.shots.get(body.team)
         return shot if shot and shot['body'] is body else None
 
-    def launch(self, body, vx, vy, now, stage):
+    def launch(self, body, vx, vy, now, stage, recharge=None):
         shot = self.selected(body)
         if not shot or shot['phase'] != 'aim' or body.keeper or self.executing():
             return False
@@ -52,7 +55,9 @@ class FireState:
         self.shots = {team: shot}
         shot.update(phase='launch', origin=body.x, started=now, velocity=(vx, vy))
         self.armed = [False, False]
-        self.ready_at[team] = now + (PLAYER_RECHARGE if team == 0 else AI_RECHARGE[stage])
+        if recharge is None:
+            recharge = PLAYER_RECHARGE if team == 0 else AI_RECHARGE[stage]
+        self.ready_at[team] = now + recharge
         return True
 
     def finish(self, team=None):
@@ -95,11 +100,8 @@ class FireAbility:
         self.fire_block = False
 
     def fire_rect(self):
-        # Four stable slots; visible diameter is twice the player disc diameter.
-        diameter = min(self.cw / 5.0, self.ctrl_pad-10, max(44, 72 * self.s))
-        cx = self.cw / 8
-        cy = self.ch - getattr(self, 'safe_bottom', 0) - self.ctrl_pad / 2
-        return cx-diameter/2, cy-diameter/2, cx+diameter/2, cy+diameter/2
+        # First of the four shared ability slots (4 x disc diameter, see abilities.py).
+        return self.ability_rect(0)
 
     def fire_press(self, x, y):
         from main import vnow
@@ -130,22 +132,20 @@ class FireAbility:
         other = b if a is ball else a if b is ball else None
         if other is None:
             return True
+        # Intangibility starts ONLY after the armed disc really touched the ball.
+        # Aim and launch phases keep every ordinary ball collision.
         flight = next(((team, shot) for team, shot in self.fire.shots.items()
-                       if shot['phase'] in ('launch', 'flight')), None)
+                       if shot['phase'] == 'flight'), None)
         if flight:
             team, shot = flight
-            # The firing disc alone may transfer its impulse to the ball.
-            if shot['phase'] == 'launch' and other is shot['body']:
-                flight = None
-            else:
-                if self.fire.keeper_blocks(shot, other, (FX0+FX1)/2):
-                    distance = math.hypot(ball.x-other.x, ball.y-other.y)
-                    approach = (ball.vx-other.vx)*(other.x-ball.x)+(ball.vy-other.vy)*(other.y-ball.y)
-                    if distance <= ball.r+other.r and approach > 0:
-                        self.fire.finish()
-                        self.fire_block = True
-                    return True
-                return False
+            if self.fire.keeper_blocks(shot, other, (FX0+FX1)/2):
+                distance = math.hypot(ball.x-other.x, ball.y-other.y)
+                approach = (ball.vx-other.vx)*(other.x-ball.x)+(ball.vy-other.vy)*(other.y-ball.y)
+                if distance <= ball.r+other.r and approach > 0:
+                    self.fire.finish()
+                    self.fire_block = True
+                return True
+            return False
         for team, shot in list(self.fire.shots.items()):
             if shot['phase'] != 'launch' or shot['body'] is not other:
                 continue
@@ -161,7 +161,8 @@ class FireAbility:
                     if magnitude > cap:
                         ball.vx *= cap/magnitude; ball.vy *= cap/magnitude
                 shot['phase'] = 'flight'
-                shot['flight_started'] = vnow()
+                # The 2 s special window counts from the special shot itself.
+                shot['flight_started'] = shot['started'] = vnow()
                 return False
         return True
 
@@ -214,25 +215,22 @@ class FireAbility:
     def draw_fire_button(self):
         from main import vnow
         now = vnow()
-        for i in range(4):
-            cx, cy = self.cw*(i+.5)/4, self.ch-getattr(self, 'safe_bottom', 0)-self.ctrl_pad/2
-            if i:
-                r = min(self.ctrl_pad*.23, self.cw/24)
-                self.cv.create_oval(cx-r, cy-r, cx+r, cy+r, outline='#709582', width=1)
-        x0,y0,x1,y1 = self.fire_rect()
-        width,height = x1-x0,y1-y0
-        down = min(1, max(0, (now-self.fire_press_started)/.08)) if self.fire_pressed else 0
-        shrink = 1-.08*down
-        size = width*shrink
-        # Original upload has generous transparent margins: draw its visible bounds.
-        self.visual.texture('fuego.png')
-        # PNG is cropped losslessly at delivery, so size is the actual icon diameter.
-        self.visual.png('fuego.png',(x0+x1-size)/2,y0+(height-size)/2+down*3,size,size,slot='fire-button')
-        unavailable = not self.fire.available(0, now)
-        if unavailable or down:
-            self.cv.create_oval(x0,y0+down*3,x1,y1+down*3,fill='#071b13',width=0,alpha=.35 if unavailable else .2)
-        remaining = max(0,self.fire.ready_at[0]-now)
-        if remaining:
-            self.cv.create_text((x0+x1)/2,(y0+y1)/2,text=str(math.ceil(remaining)),fill='#ffffff',font=self.F(1.3))
-        elif self.fire.armed[0]:
-            self.cv.create_oval(x0,y0,x1,y1,outline='#ffd400',width=3)
+        self.draw_ability_icon(0, 'fuego.png', self.fire_pressed, self.fire_press_started,
+                               not self.fire.available(0, now), self.fire.ready_at[0]-now,
+                               self.fire.armed[0] or self.fire.selected_team(0), '#ffd400')
+
+    def fire_ball_scale(self, dt):
+        """Visual-only lift: 1x -> 2x at mid flight -> 1x. Physics radius/mass untouched."""
+        from main import vnow
+        shot = next((s for s in self.fire.shots.values() if s['phase'] == 'flight'), None)
+        current = getattr(self, 'ball_scale', 1.0)
+        if shot:
+            progress = min(1.0, max(0.0, (vnow()-shot['flight_started'])/MAX_DURATION))
+            current = 1.0 + math.sin(math.pi*progress)
+        else:
+            # Goal/block/expiry: ease back to the original diameter, never jump.
+            current = 1.0 + (current-1.0)*math.exp(-max(0, dt)*10)
+            if current < 1.003:
+                current = 1.0
+        self.ball_scale = current
+        return current
