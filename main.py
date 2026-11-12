@@ -1956,8 +1956,7 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
         now = vnow()
         self.ai_update_difficulty()
         self.fire_update(dt)
-        # Fire (0.5) and PAUSA (0.15) never multiply: the lowest active one wins.
-                fire_scale = self.fire.scale(dt)               # física: fuego (PAUSA va por cuerpo)
+        fire_scale = self.fire.scale(dt)               # física: fuego (PAUSA va por cuerpo)
         lim = self.keeper_limit                        # v8: barrera del área grande
         if self.phase == "goal":
             step(self.bodies, self.ball, fire_scale, None, None, lim, body_scale=self.pausa_body_scale)
@@ -1968,7 +1967,6 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
             return
         sl = min(self.slowmo(), fire_scale)            # física sin PAUSA
         self.clock += dt * min(sl, self.pausa_scale()) # cronómetro: también al 60 % con PAUSA
-# cronómetro automático (tiempo de juego)
         if self.check_period():
             return
         touch = None
@@ -1977,7 +1975,7 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
             flight = next((s for s in self.fire.shots.values() if s['phase'] == 'flight'), None)
             if flight and not self.fire.keeper_blocks(flight, touch['k'], (FX0+FX1)/2):
                 touch = None
-        step(self.bodies, self.ball, sl, None, None, lim, touch, self.fire_collision, body_scale=self.pausa_body_scale)  
+        step(self.bodies, self.ball, sl, None, None, lim, touch, self.fire_collision, body_scale=self.pausa_body_scale)
         self.fire_update(0)
         if touch and touch["hit"]:                      # bloqueo + rebote: velocidad normal
             self.gk_mode = False
@@ -2012,6 +2010,7 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
             self.ai_shoot()
         if self.can_shoot(1, now, True) and now >= self.ai_gk_at:   # IA del arquero, independiente
             self.ai_keeper()
+            
 
     @screen_change
     def match_over(self, pen_text=""):
