@@ -6,7 +6,8 @@ keep running on the pause-aware real clock (vnow), never on simulated time.
 import math
 import random
 
-SPEED = 0.15                 # multiplicador de simulación durante PAUSA
+SPEED = 0.6                  # quien usa PAUSA, el balón y el cronómetro: 60 % (reducción 40 %)
+RIVAL_SPEED = 0.0            # rival congelado
 DURATION = 10.0              # segundos reales (respetan el botón de pausa del juego)
 PLAYER_RECHARGE = 60.0       # jugador humano, cualquier ronda
 AI_RECHARGE = 60.0           # CPU en dificultad normal
@@ -86,6 +87,16 @@ class PausaAbility:
         if self.state != 'match':
             return 1.0
         return self.pausa.scale(vnow())
+
+    def pausa_body_scale(self, b):
+        """Factor por cuerpo mientras hay PAUSA."""
+        from main import vnow
+        if self.state != 'match' or not self.pausa.active(vnow()):
+            return 1.0
+        if b is self.ball:
+            return SPEED
+        return SPEED if b.team == self.pausa.owner else RIVAL_SPEED
+        
 
     def pausa_press(self, x, y):
         from main import vnow
