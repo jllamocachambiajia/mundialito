@@ -1084,12 +1084,28 @@ def step(bodies, ball, scale=1.0, zone=None, catcher=None, limit=None, touch=Non
     touch: dict {"k": arquero, "hit": False}; marca hit=True si ese arquero toca el balón.
     Devuelve True si `catcher` atrapó el balón en este fotograma."""
     caught = False
+def step(bodies, ball, scale=1.0, zone=None, catcher=None, limit=None, touch=None, collision_policy=None, goal=None, pausa_obj=None):
+    """Avanza la física un fotograma respetando fuego, arquero y aplicando pausa asimétrica."""
+    caught = False
+    from main import vnow
+    now = vnow()
     for _ in range(SUB):
         for b in bodies:
-            k = scale / SUB
+            b_scale = scale  # Por defecto hereda la velocidad normal, de fuego o del arquero
+            
+            # Solo si la pausa está ACTIVA aplicamos el comportamiento asimétrico
+            if pausa_obj and pausa_obj.pausa.active(now):
+                if b is ball:
+                    owner = pausa_obj.pausa.owner
+                    b_scale = pausa_obj.pausa.team_scale(owner, now)
+                elif b.team is not None:
+                    b_scale = pausa_obj.pausa.team_scale(b.team, now)
+
+            k = b_scale / SUB
             if zone is not None and b.keeper:
                 k *= zone(b)
-            b.x += b.vx * k; b.y += b.vy * k
+            b.x += b.vx * k
+            b.y += b.vy * k
             walls(b, b is ball, goal)
             if limit is not None and b.keeper:
                 limit(b)
@@ -1107,12 +1123,11 @@ def step(bodies, ball, scale=1.0, zone=None, catcher=None, limit=None, touch=Non
                     collide(bodies[i], bodies[k])
     for b in bodies:
         f = FRICTION if b is ball else PLAYER_FRICTION
-        if scale != 1.0:
-            f = f ** scale
         b.vx *= f; b.vy *= f
         if b.speed() < 0.06:
             b.vx = b.vy = 0.0
     return caught
+    
 
 
 def mix(c1, c2, t):
@@ -1954,7 +1969,7 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
         fire_scale = combined_scale(self.fire.scale(dt), self.pausa_scale())
         lim = self.keeper_limit                        # v8: barrera del área grande
         if self.phase == "goal":
-            step(self.bodies, self.ball, fire_scale, None, None, lim)
+            step(self.bodies, self.ball, fire_scale, None, None, lim, pausa_obj=self)
             if now >= self.resume_at:
                 self.reset_positions()
                 if not self.check_period():
@@ -1970,7 +1985,7 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
             flight = next((s for s in self.fire.shots.values() if s['phase'] == 'flight'), None)
             if flight and not self.fire.keeper_blocks(flight, touch['k'], (FX0+FX1)/2):
                 touch = None
-        step(self.bodies, self.ball, sl, None, None, lim, touch, self.fire_collision)
+        step(self.bodies, self.ball, sl, None, None, lim, touch, self.fire_collision, pausa_obj=self)     
         self.fire_update(0)
         if touch and touch["hit"]:                      # bloqueo + rebote: velocidad normal
             self.gk_mode = False
