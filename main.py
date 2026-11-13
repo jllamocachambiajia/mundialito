@@ -1814,83 +1814,179 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
         ang = math.atan2(py, px) + random.gauss(0, noise)
         self.shoot(p, math.cos(ang) * v, math.sin(ang) * v)
     def ai_shoot(self):
-        """v11: CPU de campo. Tiro a portería con la máxima potencia y tiro con efecto si está listo.
-        Pases hacia adelante con potencia variable, rebote, pase atrás solo con compañero en su vector,
-        empuje al rival que va por el balón suelto, o espera."""
+        import math
+        from main import (
+            vnow, FX0, FX1, FY0, FY1, GY0, GY1,
+            PR, BR, MAX_DRAG, POWER, PLAYER_FRICTION,
+            FRICTION,
+        )
+
+        if self.state != 'match':
+            return
         now = vnow()
+        if now < self.next_shot_at[1]:
+            return
+        field = [p for p in self.bodies
+                 if p.team == 1 and not p.keeper]
+        if not field or self.held is not None:
+            self.ai_at = now + 0.15
+            return
+
         b = self.ball
-        hard = self.ai_hard()
-        field = [p for p in self.bodies if p.team == 1 and not p.keeper]
-        noise = (100 - rating(self.teams[1])) * (0.001 if hard else 0.005)
-        cap = MAX_DRAG * POWER * self.cpu_normal_factor()
-        plan = self.ai_fire_plan(field)
-        if plan is not None:
-            _, special_player, sx, sy, gy, bank = plan
-            if self.fire_ai(special_player, "tiro", math.hypot(sx - FX0, sy - MY)):
-                dx, dy = sx - special_player.x, sy - special_player.y
+        cap = MAX_DRAG * POWER  # Tiro normal: máximo 100 %.
+        contact = PR + BR - 2
+        rivals = [p for p in self.bodies if p.team == 0]
+
+        # Reutiliza el fuego existente: sin cambiar sus reglas.
+        if not self.fire.executing():
+            fire_plan = self.ai_fire_plan(field)
+            if fire_plan is not None:
+                _, p, sx, sy, _, _ = fire_plan
+                dx, dy = sx - p.x, sy - p.y
                 distance = math.hypot(dx, dy)
-                self.shoot(special_player, dx / distance * MAX_DRAG * POWER * self.cpu_fire_factor(),
-                           dy / distance * MAX_DRAG * POWER * self.cpu_fire_factor())
-                return
-        # 1) rival que va por el balón suelto: a veces lo empujamos en vez de tirar al balón
-        if b.speed() < 5 and random.random() < (0.7 if hard else 0.45) and self.push_rival(field):
-            return
-        bx, by = self.predict(b, 22)
-        ukeep = next((p for p in self.bodies if p.team == 0 and p.keeper), None)
-        if ukeep is not None and ukeep.y > MY:
-            gy = random.uniform(GY0 + 12, MY - 10)
-        elif ukeep is not None:
-            gy = random.uniform(MY + 10, GY1 - 12)
-        else:
-            gy = MY + random.uniform(-45, 45)
-        gdist = math.hypot(bx - FX0, by - MY)
-        recv = None
-        # 2) intento a portería si el carril está libre
-        if gdist <= (480 if hard else 300) and self.lane_free(bx, by, FX0, gy, 1):
-            target, kind = (FX0 - 15, gy), "tiro"
-        else:
-            # 3) pase hacia adelante, hacia donde estará el compañero (menos frecuente que antes)
-            best_m = self.best_forward(field, bx, by)
-            if best_m is not None and random.random() < (0.6 if hard else 0.45):
-                target, kind, recv = self.lead_point(best_m, b.x, b.y), "pase", best_m
-            else:
-                # 4) rebote en banda, o 5) pase atrás solo si hay un compañero en su vector
-                bank = self.bank_point(bx, by, gy)
-                blocker = self.own_blocker(bx, by)
-                if bank is not None and random.random() < 0.5:
-                    target, kind = bank, "tiro"
-                elif blocker is not None and random.random() < (0.8 if hard else 0.6):
-                    target, kind, recv = self.lead_point(blocker, b.x, b.y), "pase", blocker
-                else:
-                    self.ai_at = now + random.uniform(0.2, 0.4)   # espera sin disparar
+                if distance > 0 and self.fire_ai(
+                    p, 'tiro', math.hypot(sx - FX0, sy - (GY0 + GY1) / 2)
+                ):
+                    power = cap * self.cpu_fire_factor()
+                    self.shoot(p, dx / distance * power,
+                               dy / distance * power)
                     return
-        tx, ty = target
-        dx, dy = tx - bx, ty - by
-        d = math.hypot(dx, dy) or 1
-        ux, uy = dx / d, dy / d
-        ax, ay = bx - ux * (PR + BR - 3), by - uy * (PR + BR - 3)
-        best, bscore = None, 1e9
+
+        def clearance(x0, y0, x1, y1, obstacles, margin):
+            dx, dy = x1 - x0, y1 - y0
+            length2 = dx * dx + dy * dy
+            result = float('inf')
+            for q in obstacles:
+                t = ((q.x - x0) * dx + (q.y - y0) * dy) / max(length2, 1)
+                t = max(0.0, min(1.0, t))
+                result = min(result, math.hypot(
+                    q.x - x0 - t * dx, q.y - y0 - t * dy
+                ) - margin)
+            return result
+
+        best = None
+        width = FX1 - FX0
+        height = FY1 - FY0
+        keeper = next((q for q in rivals if q.keeper), None)
+
         for p in field:
-            if p is recv:
-                continue
-            dist = math.hypot(ax - p.x, ay - p.y)
-            ahead = (p.x - bx) * ux + (p.y - by) * uy
-            score = dist + (500 if ahead > 0 else 0)
-            if score < bscore:
-                best, bscore = p, score
-        if best is None:
-            self.ai_at = now + random.uniform(0.2, 0.4)
+            # Predice el balón según el tiempo de llegada de ESTA ficha.
+            bx, by = b.x, b.y
+            for _ in range(3):
+                frames = max(0.0, math.hypot(bx - p.x, by - p.y)
+                             - contact) / max(cap * 0.8, 0.01)
+                bx, by = self.predict(b, min(22.0, frames))
+
+            options = []
+            low, high = GY0 + BR + 5, GY1 - BR - 5
+            for fraction in (0.08, 0.3, 0.5, 0.7, 0.92):
+                gy = low + (high - low) * fraction
+                separation = abs(gy - keeper.y) if keeper else 60
+                options.append(('tiro', FX0 - BR, gy, None,
+                                100 + min(separation, 100) * 0.4))
+
+            # Pases: compañeros adelantados, no pases al propio lanzador.
+            for mate in field:
+                if mate is p or mate.x >= bx - PR:
+                    continue
+                tx = max(FX0 + PR + 5, mate.x + mate.vx * 5)
+                ty = min(FY1 - PR, max(FY0 + PR, mate.y + mate.vy * 5))
+                options.append(('pase', tx, ty, mate, 62))
+
+            # Regate: toque corto hacia un espacio, no empujar al rival.
+            for offset in (-height * 0.16, 0, height * 0.16):
+                tx = max(FX0 + BR + 8, bx - width * 0.13)
+                ty = min(FY1 - BR - 8, max(FY0 + BR + 8, by + offset))
+                options.append(('regate', tx, ty, None, 42))
+
+            # Bajo presión cerca del arco propio: despejar hacia las bandas.
+            if bx > FX0 + width * 0.65:
+                for ty in (FY0 + PR * 2, FY1 - PR * 2):
+                    options.append(('despeje', bx - width * 0.35,
+                                    ty, None, 78))
+
+            for kind, tx, ty, receiver, base in options:
+                dx, dy = tx - bx, ty - by
+                travel = math.hypot(dx, dy)
+                if travel < BR:
+                    continue
+                ux, uy = dx / travel, dy / travel
+                ax, ay = bx - ux * contact, by - uy * contact
+                if not (FX0 + PR <= ax <= FX1 - PR and
+                        FY0 + PR <= ay <= FY1 - PR):
+                    continue
+
+                px, py = ax - p.x, ay - p.y
+                approach = math.hypot(px, py)
+                if approach < 1:
+                    continue
+                alignment = (px * ux + py * uy) / approach
+                # No ordenar remates desde el lado incorrecto del balón.
+                if alignment < 0.82:
+                    continue
+                obstacles = [q for q in self.bodies
+                             if q is not p and q is not b]
+                if clearance(p.x, p.y, ax, ay, obstacles, 2 * PR + 2) < 0:
+                    continue
+
+                path_obstacles = [q for q in self.bodies
+                                  if q is not p and q is not b
+                                  and q is not receiver]
+                gap = clearance(bx, by, tx, ty, path_obstacles, PR + BR + 3)
+                if gap < 0:
+                    continue
+
+                available = max(0.0, cap - approach *
+                                (1 - PLAYER_FRICTION) * 1.1)
+                if kind == 'tiro':
+                    ball_v = available * 1.44 * alignment
+                    if ball_v / (1 - FRICTION) < travel * 1.1:
+                        continue
+                else:
+                    ball_v = travel * (1 - FRICTION) * 1.15 + 1.5
+                    if ball_v > available * 1.44 * alignment:
+                        continue
+
+                space = min((math.hypot(tx - q.x, ty - q.y)
+                             for q in rivals), default=width)
+                progress = (bx - tx) / width
+                score = (base + progress * 65 + min(space, 120) * 0.18
+                         + alignment * 25 - approach * 0.13)
+                if kind == 'regate':
+                    # Favorece toques que la misma ficha pueda perseguir.
+                    score -= travel * 0.08
+                if best is None or score > best[0]:
+                    best = (score, p, ax, ay, ball_v / alignment)
+
+        if best is not None:
+            _, p, ax, ay, ball_v = best
+            self.strike(p, ax, ay, ball_v, 0.0)
             return
-        if kind == "tiro":
-            # máxima potencia: entre el 90 % y el 100 % del tiro normal más fuerte
-            ball_v = cap * 1.44 * random.uniform(0.9, 1.0)
-            if random.random() < (1.0 if hard else 0.9):
-                self.fire_goal_ai(best)                  # tiro con efecto si está listo
+
+        # Recolocarse detrás del balón si no existe un golpe coherente.
+        # Evita tirar al azar o enviar el balón hacia el arco propio.
+        bx, by = self.predict(b, 8)
+        target_x = min(FX1 - PR - 5, bx + contact * 2.5)
+        moves = []
+        for p in field:
+            for offset in (-contact * 2.5, contact * 2.5):
+                target_y = min(FY1 - PR - 5,
+                               max(FY0 + PR + 5, by + offset))
+                obstacles = [q for q in self.bodies if q is not p]
+                if clearance(p.x, p.y, target_x, target_y,
+                             obstacles, 2 * PR + BR) < 0:
+                    continue
+                distance = math.hypot(target_x - p.x, target_y - p.y)
+                if distance > PR:
+                    moves.append((distance, p, target_x, target_y))
+        if moves:
+            distance, p, tx, ty = min(moves, key=lambda move: move[0])
+            speed = min(cap * 0.6, distance * (1 - PLAYER_FRICTION))
+            self.shoot(p, (tx - p.x) / distance * speed,
+                       (ty - p.y) / distance * speed)
         else:
-            # pase con potencia variable: a veces más suave, a veces más fuerte, sin pasar del 85 %
-            needed = d * (1 - FRICTION) * random.uniform(0.92, 1.12) + 2.0
-            ball_v = min(needed, cap * 1.44 * 0.85)
-        self.strike(best, ax, ay, ball_v, noise)
+            self.ai_at = now + 0.15
+            
     
 
     def gk_target(self, k):
