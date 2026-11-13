@@ -74,3 +74,58 @@ class RivalAI:
             score = distance + path*.08 - min(separation,100)*.6 + (30 if bank else 0)
             plans.append((score,p,bx,by,gy,bank))
         return min(plans, key=lambda plan:plan[0]) if plans else None
+
+    # ---- Funciones auxiliares que usa ai_shoot() en main.py (faltaban -> cierre al primer disparo)
+    def cpu_normal_factor(self):
+        return 1.0
+
+    def cpu_fire_factor(self):
+        from fire import POWER_FACTOR
+        return POWER_FACTOR
+
+    def lead_point(self, m, bx, by):
+        """Punto delante del compañero m (la CPU ataca hacia la izquierda)."""
+        from main import FX0, FY0, FY1, BR
+        x = max(FX0 + 30, m.x - 40)
+        y = min(max(m.y + m.vy * 8, FY0 + BR + 5), FY1 - BR - 5)
+        return x, y
+
+    def best_forward(self, field, bx, by):
+        """Compañero más adelantado (más cerca del arco rival) con línea de pase libre."""
+        best, bx_min = None, bx - 40
+        for m in field:
+            if m.x < bx_min and self.lane_free(bx, by, m.x, m.y, 1):
+                best, bx_min = m, m.x
+        return best
+
+    def own_blocker(self, bx, by):
+        """Compañero detrás del balón (pase atrás) con línea libre."""
+        for m in self.bodies:
+            if m.team == 1 and not m.keeper and m.x > bx + 30 and self.lane_free(bx, by, m.x, m.y, 1):
+                return m
+        return None
+
+    def bank_point(self, bx, by, gy):
+        """Punto en la banda para un rebote que termine en el arco; None si no sirve."""
+        from main import FX0, FY0, FY1, BR
+        if bx - FX0 < 60:
+            return None
+        wall = FY0 + BR if by < (FY0 + FY1) / 2 else FY1 - BR
+        d1, d2 = abs(by - wall), abs(gy - wall)
+        if d1 + d2 == 0:
+            return None
+        x = bx - (bx - FX0) * d1 / (d1 + d2)
+        return (x, wall) if self.lane_free(bx, by, x, wall, 1) else None
+
+    def push_rival(self, field):
+        """Empuja al rival más cercano al balón si un compañero está cerca de él."""
+        b = self.ball
+        rivals = [p for p in self.bodies if p.team == 0 and not p.keeper]
+        if not rivals or not field:
+            return False
+        r = min(rivals, key=lambda p: math.hypot(p.x - b.x, p.y - b.y))
+        p = min(field, key=lambda q: math.hypot(q.x - r.x, q.y - r.y))
+        if math.hypot(p.x - r.x, p.y - r.y) > 200:
+            return False
+        self.strike(p, r.x, r.y, 0, 0.02)
+        return True
