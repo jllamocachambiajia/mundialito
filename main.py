@@ -1228,12 +1228,11 @@ from presentation import VisualResources, asset, screen_change
 from fire import FireAbility, POWER_FACTOR, ANDROID_SAFE_BOTTOM_DP
 from pausa_power import PausaAbility, combined_scale
 from abilities import AbilityBar, ability_layout
-
+from campo_magnetico import MagneticAbility
 
 from ai import RivalAI, ENHANCED_COOLDOWN
 
-
-class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
+class Game(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar, TournamentView):
     def __init__(self, root):
         self.root = root
         root.title("Copa Mundial de Chapas")
@@ -1249,9 +1248,12 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
         self.ball = None
         self.keeper = None
         self.gk_reset()
+        self.ai_reset()
         self.fire_reset()
         self.pausa_reset()
+        self.magnetic_reset()
         self.ability_reset()
+        
         if self.mobile:
             root.geometry(f"{sw}x{sh}+0+0")
             try:
@@ -1529,9 +1531,12 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
         self.drag = None
         self.pen_hold = 0
         self.gk_mode = False
+        self.ai_reset()
         self.fire_reset()
         self.pausa_reset()
+        self.magnetic_reset()
         self.ability_reset()
+        
         self.music.stop()
         self.visual.gif_until = 0
         if getattr(self, 'defeat_music', None):
@@ -1636,7 +1641,9 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
         self.ai_reset()
         self.fire_reset()
         self.pausa_reset()
+        self.magnetic_reset()
         self.ability_reset()
+        
         if getattr(self, 'bracket_sound', None):
             self.bracket_sound.stop()                  # el avance suena completo hasta pulsar el botón
         self.visual.texture('fuego.png')
