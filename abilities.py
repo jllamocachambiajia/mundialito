@@ -39,9 +39,14 @@ def pausa_info():
         f'Reducción: {(1-SPEED)*100:.0f} %',
         f'Duración: {DURATION:g} s',
         f'Recarga: {PLAYER_RECHARGE:g} s'])
+from campo_magnetico import magnetic_info
 
+INFO = {
+    0: fire_info,
+    1: pausa_info,
+    2: magnetic_info,
+}
 
-INFO = {0: fire_info, 1: pausa_info}
 
 
 class AbilityBar:
@@ -72,7 +77,10 @@ class AbilityBar:
                 return True
         if self.info_open is not None:
             self.info_open = None
-        return self.fire_press(x, y) or self.pausa_press(x, y)
+        return (self.fire_press(x, y)
+                or self.pausa_press(x, y)
+                or self.magnetic_press(x, y))
+        
 
     def ability_release(self, x, y):
         if self.info_pressed is not None:
@@ -80,12 +88,16 @@ class AbilityBar:
             if self.info_hit(slot, x, y):
                 self.info_open = None if self.info_open == slot else slot
             return True
-        return self.fire_release(x, y) or self.pausa_release(x, y)
-
+        return (self.fire_release(x, y)
+                or self.pausa_release(x, y)
+                or self.magnetic_release(x, y))
+        
     def ability_cooldown(self, slot):
         from fire import PLAYER_RECHARGE as FIRE
         from pausa_power import PLAYER_RECHARGE as PAUSA
-        return {0: FIRE, 1: PAUSA}.get(slot)
+        from campo_magnetico import RECHARGE as CAMPO
+        return {0: FIRE, 1: PAUSA, 2: CAMPO}.get(slot)
+        
 
     def draw_ability_icon(self, slot, image, pressed, press_started, unavailable, remaining, active, ring):
         from main import vnow
@@ -109,13 +121,14 @@ class AbilityBar:
                                 fill='#ffffff', font=self.F(1.3))
 
     def draw_abilities(self):
-        for slot in range(2, SLOTS):                # reservadas, aún sin habilidad
+        for slot in range(3, SLOTS):   # reservadas, aún sin habilidad
             x0, y0, x1, y1 = self.ability_rect(slot)
             r = (x1 - x0) * .32
             cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
             self.cv.create_oval(cx - r, cy - r, cx + r, cy + r, outline='#709582', width=1)
         self.draw_fire_button()
         self.draw_pausa_button()
+        self.draw_magnetic_button()
         for slot in INFO:
             cx, cy, r = self.info_circle(slot)
             down = self.info_pressed == slot
