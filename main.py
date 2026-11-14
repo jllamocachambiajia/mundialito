@@ -1514,8 +1514,10 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
             self.info_pressed = None
             self.pen_hold = 0
             self.music.pause()
+            self.magnetic_pause()
         else:
             self.music.resume()
+            self.magnetic_resume()
         self.last_t = vnow()
         self.draw()
 
@@ -2087,15 +2089,16 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
         if b.x - b.r > FX1:
             return 0
         return None
-
     def match_update(self, dt):
         now = vnow()
+        self.magnetic_update()
         self.ai_update_difficulty()
         self.fire_update(dt)
         fire_scale = self.fire.scale(dt)               # física: fuego (PAUSA va por cuerpo)
         lim = self.keeper_limit                        # v8: barrera del área grande
         if self.phase == "goal":
-            step(self.bodies, self.ball, fire_scale, None, None, lim, body_scale=self.pausa_body_scale)
+            step(self.bodies, self.ball, fire_scale, None, None, lim, collision_policy=self.match_collision, body_scale=self.pausa_body_scale)
+            
             if now >= self.resume_at:
                 self.reset_positions()
                 if not self.check_period():
@@ -2111,7 +2114,12 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
             flight = next((s for s in self.fire.shots.values() if s['phase'] == 'flight'), None)
             if flight and not self.fire.keeper_blocks(flight, touch['k'], (FX0+FX1)/2):
                 touch = None
-        step(self.bodies, self.ball, sl, None, None, lim, touch, self.fire_collision, body_scale=self.pausa_body_scale)
+        # Un balón repelido por el campo no ha tocado al arquero.
+        if touch is not None and self.magnetic_active_body(touch['k']):
+            touch = None
+
+        step(self.bodies, self.ball, sl, None, None, lim, touch, self.match_collision, body_scale=self.pausa_body_scale)
+        
         self.fire_update(0)
         if touch and touch["hit"]:                      # bloqueo + rebote: velocidad normal
             self.gk_mode = False
@@ -2142,6 +2150,7 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
             self.pending = None
             self.shoot(p, vx, vy)
         self.pausa_ai()
+        self.magnetic_ai()
         if self.can_shoot(1, now) and now >= self.ai_at:
             self.ai_shoot()
         self.ai_keeper()                                             # v10: arquero CPU en cada fotograma
@@ -2152,6 +2161,7 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
     def match_over(self, pen_text=""):
         self.fire.clear()
         self.pausa.finish()
+        self.magnetic_finish()
         a, b = self.teams
         if pen_text:
             w = pen_text.split("gana ")[-1]
@@ -2188,6 +2198,7 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
     def start_penalties(self):
         self.fire.clear()
         self.pausa.finish()
+        self.magnetic_finish()
         self.pens = [[], []]
         self.pen_k = 0
         self.state = "pens"
@@ -2797,7 +2808,9 @@ class Game(RivalAI, FireAbility, PausaAbility, AbilityBar, TournamentView):
         fx_dt = max(0.0, min(.1, fx_now - getattr(self, '_fx_last', fx_now)))
         self._fx_last = fx_now
         if self.state == 'match':
-            self.draw_pausa_effect(fx_dt)               # sobre las chapitas, bajo el balón
+            self.draw_pausa_effect(fx_dt)
+            self.draw_magnetic_fields()
+            # sobre las chapitas, bajo el balón
         # balón
         b = self.ball
         sx, sy = self.to_s(b.x, b.y)
