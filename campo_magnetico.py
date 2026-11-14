@@ -10,6 +10,7 @@ import wave
 
 DURATION = 12.0
 RECHARGE = 30.0
+LOCK_OTHER = 22.0  # rival espera: 12 s de campo + 10 s
 RADIUS_FACTOR = 2.0
 START_VOLUME = 0.65
 BACKGROUND_VOLUME = 0.12
@@ -31,8 +32,9 @@ def magnetic_info():
 
 class MagneticState:
     def __init__(self):
-        self.ready_at = [0.0, 0.0]
-        self.until = [0.0, 0.0]
+        self.ready_at = [0.0, 0.0]      # recarga propia (30 s desde que se activa)
+        self.until = [0.0, 0.0]         # fin del campo propio (12 s)
+        self.locked_until = [0.0, 0.0]  # bloqueo del otro equipo (22 s)
 
     def active(self, team, now):
         return team in (0, 1) and now < self.until[team]
@@ -40,18 +42,23 @@ class MagneticState:
     def available(self, team, now):
         return (team in (0, 1)
                 and now >= self.ready_at[team]
+                and now >= self.locked_until[team]
                 and not self.active(team, now))
 
     def activate(self, team, now):
         if not self.available(team, now):
             return False
+        other = 1 - team
         self.until[team] = now + DURATION
         self.ready_at[team] = now + RECHARGE
+        # El otro equipo no puede usarlo hasta 12 s de campo + 10 s de espera.
+        self.locked_until[other] = now + LOCK_OTHER
         return True
 
     def finish(self):
         # Conserva las recargas; el reinicio del partido crea otro estado.
         self.until = [0.0, 0.0]
+        self.locked_until = [0.0, 0.0]
 
 
 class MagneticAudio:
@@ -198,11 +205,6 @@ class MagneticAudio:
 
 
 class MagneticAbility:
-    def magnetic_now(self):
-        # Reloj del partido (respeta la pausa), el mismo que usan PAUSA y FUEGO.
-        from main import vnow
-        return vnow()
-        
     def magnetic_reset(self):
         # También funciona en __init__, antes de crear self.snd.
         for audio in getattr(self, 'magnetic_audio', []):
@@ -212,6 +214,11 @@ class MagneticAbility:
         self.magnetic_pressed = False
         self.magnetic_press_started = 0.0
         self.magnetic_next_ai = 0.0
+
+    def magnetic_now(self):
+        # Reloj pausa-aware del juego (main.py).
+        from main import vnow
+        return vnow()
 
     def magnetic_prepare(self):
         for audio in self.magnetic_audio:
@@ -223,14 +230,27 @@ class MagneticAbility:
         for audio in self.magnetic_audio:
             audio.stop()
 
-    def magnetic_active_body(self, body, now=None):
-        if getattr(self, 'state', None) != 'match':
-            return False
-        if body is None or body is getattr(self, 'ball', None):
-            return False
+    def magnetic_ball_team(self, now=None):
+        """Equipo cuyo campo protege al balón (None si no hay campo activo)."""
         if now is None:
             now = self.magnetic_now()
-        return self.magnetic.active(body.team, now)
+        for team in (0, 1):
+            if self.magnetic.active(team, now):
+                return team
+        return None
+
+    def magnetic_shield_team(self, body, now=None):
+        """Equipo que protege a este cuerpo (None si no está protegido)."""
+        if now is None:
+            now = self.magnetic_now()
+        if body is getattr(self, 'ball', None):
+            return self.magnetic_ball_team(now)
+        return body.team if self.magnetic.active(body.team, now) else None
+
+    def magnetic_active_body(self, body, now=None):
+        if getattr(self, 'state', None) != 'match' or body is None:
+            return False
+        return self.magnetic_shield_team(body, now) is not None
 
     def magnetic_activate(self, team):
         if (getattr(self, 'state', None) != 'match'
@@ -317,59 +337,45 @@ class MagneticAbility:
             return self.magnetic_activate(1)
         return False
 
-    def magnetic_collision(self, a, b):
-        """False: esta pareja ya se resolvió mediante los escudos.
-
-        True: sigue con la política de fuego / colisión ordinaria.
-        Los compañeros no se repelen; el balón sí es repelido.
-        """
-        if self.state != 'match':
-            return True
-        ball = self.ball
-        if a is not ball and b is not ball and a.team == b.team:
-            return True
-        now = self.magnetic_now()
-        shield_a = self.magnetic_active_body(a, now)
-        shield_b = self.magnetic_active_body(b, now)
-        if not (shield_a or shield_b):
-            return True
-
-        radius_a = a.r * (RADIUS_FACTOR if shield_a else 1.0)
-        radius_b = b.r * (RADIUS_FACTOR if shield_b else 1.0)
-        minimum = radius_a + radius_b
-        dx, dy = b.x - a.x, b.y - a.y
+    def magnetic_repel(self, guard, free):
+        """El rival rebota con la misma velocidad relativa; el protegido no cambia."""
+        dx, dy = free.x - guard.x, free.y - guard.y
+        minimum = guard.r * RADIUS_FACTOR + free.r
         distance = math.hypot(dx, dy)
         if distance >= minimum:
             return False
-
-        if distance > 0.000001:
+        if distance > 1e-6:
             nx, ny = dx / distance, dy / distance
         else:
-            # También resuelve centros coincidentes sin dividir por cero.
-            vx, vy = a.vx - b.vx, a.vy - b.vy
-            length = math.hypot(vx, vy)
-            if length > 0.000001:
-                nx, ny = vx / length, vy / length
-            else:
-                nx, ny = 1.0, 0.0
+            nx, ny = 1.0, 0.0
+        free.x = guard.x + nx * (minimum + 0.001)
+        free.y = guard.y + ny * (minimum + 0.001)
+        rel = (free.vx - guard.vx) * nx + (free.vy - guard.vy) * ny
+        if rel < 0.0:
+            free.vx -= 2.0 * rel * nx
+            free.vy -= 2.0 * rel * ny
+        return True
 
-        mass_a = max(0.000001, a.m)
-        mass_b = max(0.000001, b.m)
-        share = mass_b / (mass_a + mass_b)
-        overlap = minimum - distance + 0.001
-        a.x -= nx * overlap * share
-        a.y -= ny * overlap * share
-        b.x += nx * overlap * (1.0 - share)
-        b.y += ny * overlap * (1.0 - share)
-
-        relative = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny
-        if relative < 0.0:
-            impulse = -(1.0 + 0.92) * relative / (
-                1.0 / mass_a + 1.0 / mass_b)
-            a.vx -= impulse * nx / mass_a
-            a.vy -= impulse * ny / mass_a
-            b.vx += impulse * nx / mass_b
-            b.vy += impulse * ny / mass_b
+    def magnetic_collision(self, a, b):
+        """False: la pareja la resuelve el campo. True: choque normal."""
+        if self.state != 'match':
+            return True
+        now = self.magnetic_now()
+        ball = self.ball
+        ta = self.magnetic_shield_team(a, now)
+        tb = self.magnetic_shield_team(b, now)
+        if ta is None and tb is None:
+            return True
+        if ta is not None and ta == tb:
+            return True                 # mismo equipo: pase y tiro normales
+        if ta is not None and tb is not None:
+            # Campos de equipos distintos: manda el campo del balón.
+            guard, free = (a, b) if (a is ball or b is not ball) else (b, a)
+        elif ta is not None:
+            guard, free = a, b
+        else:
+            guard, free = b, a
+        self.magnetic_repel(guard, free)
         return False
 
     def match_collision(self, a, b):
@@ -382,12 +388,13 @@ class MagneticAbility:
         if self.state != 'match':
             return
         now = self.magnetic_now()
-        for body in self.bodies:
-            if not self.magnetic_active_body(body, now):
+        for body in list(self.bodies) + [self.ball]:
+            team = self.magnetic_shield_team(body, now)
+            if team is None:
                 continue
             x, y = self.to_s(body.x, body.y)
             radius = body.r * self.s * RADIUS_FACTOR
-            color = '#35eaff' if body.team == 0 else '#ff65b5'
+            color = '#35eaff' if team == 0 else '#ff65b5'
             alpha = 0.07 + 0.03 * math.sin(now * 5.0)
             self.cv.create_oval(
                 x - radius, y - radius, x + radius, y + radius,
@@ -414,4 +421,3 @@ class MagneticAbility:
             not self.magnetic.available(0, now),
             max(0.0, self.magnetic.ready_at[0] - now),
             self.magnetic.active(0, now), '#35eaff')
-      
