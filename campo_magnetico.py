@@ -198,6 +198,11 @@ class MagneticAudio:
 
 
 class MagneticAbility:
+    def magnetic_now(self):
+        # Reloj del partido (respeta la pausa), el mismo que usan PAUSA y FUEGO.
+        from main import vnow
+        return vnow()
+        
     def magnetic_reset(self):
         # También funciona en __init__, antes de crear self.snd.
         for audio in getattr(self, 'magnetic_audio', []):
