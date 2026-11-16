@@ -1116,6 +1116,11 @@ def step(bodies, ball, scale=1.0, zone=None, catcher=None, limit=None, touch=Non
             for k in range(i + 1, len(bodies)):
                 if collision_policy is None or collision_policy(bodies[i], bodies[k]):
                     collide(bodies[i], bodies[k])
+        # Collisions and magnetic repulsion can move a keeper AFTER integration.
+        if limit is not None:
+            for body in bodies:
+                if body.keeper:
+                    limit(body)
     for b in bodies:
         f = FRICTION if b is ball else PLAYER_FRICTION
         if scale != 1.0:
@@ -1648,6 +1653,10 @@ class Game(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar, Tour
             self.bracket_sound.stop()                  # el avance suena completo hasta pulsar el botón
         self.visual.texture('fuego.png')
         self.visual.texture('pausa.png')
+        self.visual.texture('campo.png')
+        self.magnetic_prepare()
+        for audio in self.magnetic_stun_audio:
+            audio.prepare()
         if self.snd.backend == 'kivy':
             for name in ('fuego', 'pausa_inicio'):
                 path = self.snd.files[('', name)]
@@ -1673,6 +1682,11 @@ class Game(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar, Tour
 
     def reset_positions(self):
         self.fire.clear()
+        # A new formation must not leave sounds or references to old keepers.
+        for audio in self.magnetic_stun_audio:
+            audio.stop()
+        self.magnetic_stuns.clear()
+        self.magnetic_fire_override = None
         self.bodies = []
         for t in (0, 1):
             for i, (fx, fy) in enumerate(FORMATION):
@@ -1722,6 +1736,8 @@ class Game(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar, Tour
         return random.uniform(0.25, 0.75) * (1.6 - r / 100)
 
     def shoot(self, body, vx, vy):
+        if self.magnetic_stunned(body):
+            return
         sp = math.hypot(vx, vy)
         cap = MAX_DRAG * POWER
         selected = self.fire.selected(body)
@@ -2026,7 +2042,7 @@ class Game(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar, Tour
         """v11: arquero CPU. Toma el balón que le llega y lo saca a un compañero con potencia real;
         si no, revisa el balón cada fotograma y acelera suavemente hacia su posición."""
         k = next((p for p in self.bodies if p.team == 1 and p.keeper), None)
-        if k is None or self.state != "match" or self.phase != "play":
+        if k is None or self.state != "match" or self.phase != "play" or self.magnetic_stunned(k):
             return
         now = vnow()
         b = self.ball
@@ -2104,7 +2120,7 @@ class Game(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar, Tour
         fire_scale = self.fire.scale(dt)               # física: fuego (PAUSA va por cuerpo)
         lim = self.keeper_limit                        # v8: barrera del área grande
         if self.phase == "goal":
-            step(self.bodies, self.ball, fire_scale, None, None, lim, collision_policy=self.match_collision, body_scale=self.pausa_body_scale)
+            step(self.bodies, self.ball, fire_scale, None, None, lim, collision_policy=self.match_collision, body_scale=self.magnetic_body_scale)
             
             if now >= self.resume_at:
                 self.reset_positions()
@@ -2122,10 +2138,10 @@ class Game(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar, Tour
             if flight and not self.fire.keeper_blocks(flight, touch['k'], (FX0+FX1)/2):
                 touch = None
         # Un balón repelido por el campo no ha tocado al arquero.
-        if touch is not None and self.magnetic_active_body(touch['k']):
+        if touch is not None and (self.magnetic_active_body(touch['k']) or self.magnetic_stunned(touch['k'])):
             touch = None
 
-        step(self.bodies, self.ball, sl, None, None, lim, touch, self.match_collision, body_scale=self.pausa_body_scale)
+        step(self.bodies, self.ball, sl, None, None, lim, touch, self.match_collision, body_scale=self.magnetic_body_scale)
         
         self.fire_update(0)
         if touch and touch["hit"]:                      # bloqueo + rebote: velocidad normal
@@ -2159,7 +2175,8 @@ class Game(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar, Tour
         self.pausa_ai()
         self.magnetic_ai()
         if self.can_shoot(1, now) and now >= self.ai_at:
-            self.ai_shoot()
+            if not self.magnetic_attack():
+                self.ai_shoot()
         self.ai_keeper()                                             # v10: arquero CPU en cada fotograma
         
             
@@ -2691,7 +2708,7 @@ class Game(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar, Tour
                 return
             best, bd = None, reach
             for p in self.bodies:
-                if p.team == 0 and not (p.keeper and self.kick_team is not None):
+                if p.team == 0 and not self.magnetic_stunned(p) and not (p.keeper and self.kick_team is not None):
                     d = math.hypot(p.x - wx, p.y - wy)
                     if d <= bd:
                         best, bd = p, d
@@ -2817,6 +2834,7 @@ class Game(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar, Tour
         if self.state == 'match':
             self.draw_pausa_effect(fx_dt)
             self.draw_magnetic_fields()
+            self.draw_magnetic_electricity()
             # sobre las chapitas, bajo el balón
         # balón
         b = self.ball
@@ -2856,6 +2874,7 @@ class Game(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar, Tour
         self.draw_hud()
         if self.state == 'match':
             self.draw_abilities()
+            self.draw_magnetic_fire_penalties()
         self.draw_pause_button()
 
         cd = self.countdown()[0] if self.state == "pens" and self.pen_wait and not self.lock else None

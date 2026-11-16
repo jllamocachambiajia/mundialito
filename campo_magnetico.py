@@ -12,6 +12,10 @@ DURATION = 12.0
 RECHARGE = 30.0
 LOCK_OTHER = 22.0  # rival espera: 12 s de campo + 10 s
 RADIUS_FACTOR = 2.0
+RETURN_FACTOR = 0.60
+STUN_DURATION = 5.0
+FIRE_CONTACT_FACTOR = 0.50
+FIRE_PENALTY = 40.0
 START_VOLUME = 0.65
 BACKGROUND_VOLUME = 0.12
 END_VOLUME = 0.55
@@ -23,7 +27,10 @@ LOG = logging.getLogger(__name__)
 def magnetic_info():
     return ('CAMPO MAGNÉTICO', [
         'Protege al equipo y al arquero',
-        'Repele rivales y el balón',
+        'Protege también la pelota; repele rivales',
+        'Devuelve el 60 % del impacto rival',
+        'Electrocuta al arquero rival durante 5 s',
+        'Fuego contra el campo: 50 %, recarga 40 s',
         'Radio: 2 veces el de cada ficha',
         'Duración: 12 s',
         'Recarga: 30 s desde la activación',
@@ -214,6 +221,12 @@ class MagneticAbility:
         self.magnetic_pressed = False
         self.magnetic_press_started = 0.0
         self.magnetic_next_ai = 0.0
+        for audio in getattr(self, 'magnetic_stun_audio', []):
+            audio.stop()
+        self.magnetic_stuns = {}
+        self.magnetic_stun_audio = [ElectricAudio(), ElectricAudio()]
+        self.magnetic_fire_penalty = [0.0, 0.0]
+        self.magnetic_fire_override = None
 
     def magnetic_now(self):
         # Reloj pausa-aware del juego (main.py).
@@ -226,6 +239,10 @@ class MagneticAbility:
 
     def magnetic_finish(self):
         self.magnetic.finish()
+        self.magnetic_stuns.clear()
+        self.magnetic_fire_override = None
+        for audio in self.magnetic_stun_audio:
+            audio.stop()
         self.magnetic_pressed = False
         for audio in self.magnetic_audio:
             audio.stop()
@@ -290,6 +307,18 @@ class MagneticAbility:
 
     def magnetic_update(self):
         now = self.magnetic_now()
+        self.fire.expire(now)
+        if not self.fire.shots:
+            self.magnetic_fire_override = None
+        for keeper, effect in list(self.magnetic_stuns.items()):
+            if now >= effect["until"] or keeper not in self.bodies:
+                self.magnetic_stun_audio[keeper.team].stop()
+                del self.magnetic_stuns[keeper]
+            else:
+                keeper.x, keeper.y = effect["position"]
+                keeper.vx = keeper.vy = 0.0
+                self.keeper_limit(keeper)
+                self.magnetic_stun_audio[keeper.team].update(now, getattr(self.snd, "on", True))
         enabled = getattr(getattr(self, 'snd', None), 'on', True)
         for team, audio in enumerate(self.magnetic_audio):
             if self.magnetic.active(team, now):
@@ -299,12 +328,15 @@ class MagneticAbility:
 
     def magnetic_pause(self):
         self.magnetic_pressed = False
-        for audio in self.magnetic_audio:
+        for audio in self.magnetic_audio + self.magnetic_stun_audio:
             audio.pause()
 
     def magnetic_resume(self):
         now = self.magnetic_now()
         enabled = getattr(getattr(self, 'snd', None), 'on', True)
+        for keeper in self.magnetic_stuns:
+            if self.magnetic_stunned(keeper):
+                self.magnetic_stun_audio[keeper.team].resume(now, enabled)
         for team, audio in enumerate(self.magnetic_audio):
             if self.magnetic.active(team, now):
                 audio.resume(now, enabled)
@@ -324,21 +356,118 @@ class MagneticAbility:
                 or not self.magnetic.available(1, now)):
             return False
 
-        allies = [p for p in self.bodies
-                  if p is not self.ball and p.team == 1]
-        rivals = [p for p in self.bodies
-                  if p is not self.ball and p.team == 0]
-        # Se protege cuando hay presión real alrededor de una ficha.
-        pressure = any(
-            math.hypot(p.x - q.x, p.y - q.y)
-            < 4.0 * (p.r + q.r)
-            for p in allies for q in rivals)
-        if pressure:
+        plan = self.magnetic_attack_plan()
+        if plan is not None:
             return self.magnetic_activate(1)
         return False
 
+    def magnetic_attack_plan(self):
+        """Validate the actual disc-to-ball direction; reuse prediction and goal bounds."""
+        from main import FX0, FY0, FY1, GY0, GY1, BR, MAX_DRAG, POWER, PLAYER_FRICTION, FRICTION
+        ball = self.ball
+        if ball is None or self.held is not None:
+            return None
+        cap = MAX_DRAG * POWER
+        keeper = next((q for q in self.bodies if q.team == 0 and q.keeper), None)
+        plans = []
+        for disc in self.bodies:
+            if disc.team != 1 or disc.keeper:
+                continue
+            bx, by = self.predict(ball, min(14, math.hypot(ball.x-disc.x, ball.y-disc.y)/cap))
+            dx, dy = bx-disc.x, by-disc.y
+            distance = math.hypot(dx, dy)
+            if distance < 1 or distance > 300 or dx >= -distance*.65:
+                continue
+            gy = by + dy/dx*(FX0-bx)
+            if not GY0+BR < gy < GY1-BR:
+                continue
+            if not self.lane_free(disc.x, disc.y, bx, by, 1):
+                continue
+            speed = max(0, cap-distance*(1-PLAYER_FRICTION)) * 1.44
+            if speed/(1-FRICTION) < math.hypot(FX0-bx, gy-by)*1.1:
+                continue
+            separation = abs(gy-keeper.y) if keeper else 70
+            score = distance-min(separation,100)*.3
+            plans.append((score, disc, dx/distance*cap, dy/distance*cap))
+        return min(plans, key=lambda item:item[0]) if plans else None
+
+    def magnetic_attack(self):
+        now = self.magnetic_now()
+        if not self.magnetic.active(1, now) or not self.can_shoot(1, now) or now < self.ai_at:
+            return False
+        plan = self.magnetic_attack_plan()
+        if plan is None:
+            return False
+        _, disc, vx, vy = plan
+        self.shoot(disc, vx, vy)
+        return True
+
+    def magnetic_stunned(self, body):
+        effect = getattr(self, 'magnetic_stuns', {}).get(body)
+        return (getattr(self, 'state', None) == 'match' and effect is not None
+                and self.magnetic_now() < effect['until'])
+
+    def magnetic_body_scale(self, body):
+        return 0.0 if self.magnetic_stunned(body) else self.pausa_body_scale(body)
+
+    def magnetic_electrocute(self, keeper):
+        if self.magnetic_stunned(keeper):
+            return
+        now = self.magnetic_now()
+        self.keeper_limit(keeper)
+        keeper.vx = keeper.vy = 0.0
+        self.magnetic_stuns[keeper] = dict(started=now, until=now+STUN_DURATION,
+                                          position=(keeper.x, keeper.y))
+        if self.drag is keeper:
+            self.drag = None
+        if self.pending is not None and self.pending[0] is keeper:
+            self.pending = None
+        if getattr(self, 'held', None) is keeper:
+            self.held = None
+        if keeper.team == 0:
+            self.gk_mode = False
+            self.gk_released_at = None
+        if getattr(self, 'dash', None) and self.dash['k'] is keeper:
+            self.dash = None
+        self.magnetic_stun_audio[keeper.team].begin(now, getattr(self.snd, 'on', True))
+
+    def magnetic_fire_contact(self, a, b, now):
+        """Only the selected launching disc may breach a protected ball, once."""
+        ball = self.ball
+        disc = b if a is ball else a if b is ball else None
+        if disc is None:
+            return False
+        shot = self.fire.selected(disc)
+        if not shot or shot['phase'] != 'launch':
+            return False
+        owner = self.magnetic_ball_team(now)
+        if owner is None or owner == disc.team:
+            return False
+        dx, dy = ball.x-disc.x, ball.y-disc.y
+        distance = math.hypot(dx, dy)
+        if not 0 < distance < ball.r+disc.r:
+            return False
+        if (disc.vx-ball.vx)*dx+(disc.vy-ball.vy)*dy <= 0:
+            return False
+        # Reuse the existing transfer, then reduce that shot, not normal POWER.
+        launched_at = shot['started']
+        self.fire_collision(a, b)
+        if shot['phase'] != 'flight':
+            return False
+        ball.vx *= FIRE_CONTACT_FACTOR
+        ball.vy *= FIRE_CONTACT_FACTOR
+        cap = math.hypot(*shot['velocity'])*1.44*FIRE_CONTACT_FACTOR
+        self.magnetic_fire_override = dict(shot=shot, owner=owner, cap=cap)
+        deadline = launched_at+FIRE_PENALTY
+        self.fire.ready_at[disc.team] = deadline
+        self.magnetic_fire_penalty[disc.team] = deadline
+        return True
+
     def magnetic_repel(self, guard, free):
-        """El rival rebota con la misma velocidad relativa; el protegido no cambia."""
+        """Return 60% of inward impact; moving guards push through ordinary contact.
+        Absolute normal speed is bounded by the largest pre-contact normal speed,
+        so repeated overlaps cannot pump energy into the simulation.
+        """
         dx, dy = free.x - guard.x, free.y - guard.y
         minimum = guard.r * RADIUS_FACTOR + free.r
         distance = math.hypot(dx, dy)
@@ -350,10 +479,18 @@ class MagneticAbility:
             nx, ny = 1.0, 0.0
         free.x = guard.x + nx * (minimum + 0.001)
         free.y = guard.y + ny * (minimum + 0.001)
-        rel = (free.vx - guard.vx) * nx + (free.vy - guard.vy) * ny
-        if rel < 0.0:
-            free.vx -= 2.0 * rel * nx
-            free.vy -= 2.0 * rel * ny
+        incoming = free.vx*nx+free.vy*ny
+        pushing = guard.vx*nx+guard.vy*ny
+        if incoming-pushing < 0:
+            returned = RETURN_FACTOR*max(0.0, -incoming)
+            outgoing = max(returned, pushing, 0.0)
+            outgoing = min(outgoing, max(abs(incoming), abs(pushing)))
+            free.vx += (outgoing-incoming)*nx
+            free.vy += (outgoing-incoming)*ny
+        if free.keeper:
+            self.keeper_limit(free)
+            if guard is self.ball:
+                self.magnetic_electrocute(free)
         return True
 
     def magnetic_collision(self, a, b):
@@ -379,7 +516,34 @@ class MagneticAbility:
         return False
 
     def match_collision(self, a, b):
-        # El escudo gana prioridad frente a la intangibilidad del fuego.
+        if self.state != 'match':
+            return True
+        now = self.magnetic_now()
+        self.fire.expire(now)
+        # Stunned keepers neither block nor transmit impulses, even after expiry.
+        if self.magnetic_stunned(a) or self.magnetic_stunned(b):
+            return False
+        if self.magnetic_fire_contact(a, b, now):
+            return False
+        # Permit ONLY that selected launch to cross the outer shield and reach
+        # the real ball. A miss never acquires an override or a penalty.
+        other = b if a is self.ball else a if b is self.ball else None
+        if other is not None:
+            launch = self.fire.selected(other)
+            owner = self.magnetic_ball_team(now)
+            if launch and launch['phase'] == 'launch' and owner is not None and owner != other.team:
+                return True
+        exception = self.magnetic_fire_override
+        if exception and any(shot is exception['shot'] for shot in self.fire.shots.values()):
+            other = b if a is self.ball else a if b is self.ball else None
+            if other is not None and other.team == exception['owner']:
+                from main import collide
+                collide(a, b)
+                speed = self.ball.speed()
+                if speed > exception['cap'] and speed > 0:
+                    self.ball.vx *= exception['cap']/speed
+                    self.ball.vy *= exception['cap']/speed
+                return False
         if not self.magnetic_collision(a, b):
             return False
         return self.fire_collision(a, b)
@@ -388,7 +552,7 @@ class MagneticAbility:
         if self.state != 'match':
             return
         now = self.magnetic_now()
-        for body in list(self.bodies) + [self.ball]:
+        for body in self.bodies:
             team = self.magnetic_shield_team(body, now)
             if team is None:
                 continue
@@ -421,3 +585,77 @@ class MagneticAbility:
             not self.magnetic.available(0, now),
             max(0.0, self.magnetic.ready_at[0] - now),
             self.magnetic.active(0, now), '#35eaff')
+
+    def draw_magnetic_electricity(self):
+        now = self.magnetic_now()
+        for keeper, effect in self.magnetic_stuns.items():
+            elapsed, left = now-effect['started'], effect['until']-now
+            fade = max(0.0, min(1.0, elapsed/.3, left/.4))
+            if fade <= 0:
+                continue
+            x, y = self.to_s(keeper.x, keeper.y)
+            radius = keeper.r*self.s
+            self.draw_electric_sparks(x, y, radius, now, fade, '#7df9ff')
+
+    def draw_electric_sparks(self, x, y, radius, now, fade, color):
+        for i in range(7):
+            angle = i*math.tau/7 + .16*math.sin(now*8+i)
+            r = radius*(.45 if i%3 == 0 else 1.1)
+            blink = .5+.5*math.sin(now*17+i*2)
+            length = radius*.32*fade*blink
+            if length < .4:
+                continue
+            px, py = x+math.cos(angle)*r, y+math.sin(angle)*r
+            points = [(px,py), (px+length*.3,py-length*.35),
+                      (px-length*.15,py-length*.65), (px+length*.35,py-length)]
+            for first, last in zip(points, points[1:]):
+                self.cv.create_line(*first, *last, fill=color, width=max(1, radius*.065))
+
+    def draw_magnetic_fire_penalties(self):
+        now = self.magnetic_now()
+        x0,y0,x1,y1 = self.ability_rect(0)
+        for team, until in enumerate(self.magnetic_fire_penalty):
+            if now >= until:
+                continue
+            if team == 0:
+                x,y,r = (x0+x1)/2,(y0+y1)/2,(x1-x0)*.4
+            else:
+                r = self.u*.8
+                x,y = self.cw-self.u*2, self.hud*.35
+                self.cv.create_text(x-self.u*1.2,y,text=str(math.ceil(until-now)),
+                                    fill='#ff3535',font=self.F(.65),anchor='e')
+            self.draw_electric_sparks(x,y,r,now,1.0,'#ff3535')
+
+
+class ElectricAudio(MagneticAudio):
+    """One independent looping channel per keeper; no per-frame restart."""
+    def prepare(self):
+        if self.loaded:
+            return
+        self.loaded = True
+        try:
+            from kivy.core.audio import SoundLoader
+            from presentation import asset
+            sound = SoundLoader.load(asset('sounds','effects','electrocucion.wav'))
+            if sound is not None:
+                sound.loop = True
+                self.sounds[0] = sound
+                self.lengths[0] = max(.01, sound.length)
+        except Exception as exc:
+            LOG.warning('Electrocución sin audio: %s', exc)
+
+    def update(self, now, enabled=True):
+        if self.started is None or self.suspended:
+            return
+        elapsed = max(0, now-self.started)
+        if elapsed >= STUN_DURATION:
+            self.stop()
+            return
+        if not enabled:
+            self._silence()
+            return
+        volume = .18*min(1.0, (STUN_DURATION-elapsed)/.35)
+        if self.phase != 'electric':
+            self._play(0, volume, elapsed % max(.01,self.lengths[0]))
+            self.phase = 'electric'
+        self._volume(self.sounds[0], volume)
