@@ -261,7 +261,7 @@ class _CanvasWidget(_Widget):
         super().__init__(**kw)
         self.root = root
         self.handlers = {}
-        self.bind(size=self._resized)
+        self.bind(size=self._resized, pos=self._resized)
 
     # --- tk API
     def pack(self, **kw):
@@ -409,14 +409,16 @@ class _CanvasWidget(_Widget):
             bold = len(font) > 2 and "bold" in str(font[2])
         size = max(6, size)
         wrap = int(width) if width else None
-        key = (text, size, bold, fill, wrap)
+        family = font[0] if isinstance(font, tuple) else "Oswald"
+        face = asset("fonts", "Teko-Bold.ttf" if family == "Teko" or (str(text).isdigit() and bold) else "Oswald.ttf")
+        key = (text, size, bold, fill, wrap, face)
         tex = self.TEX.get(key)
         if tex is None:
             if len(self.TEX) > 900:
                 for old in list(self.TEX)[:150]:
                     self.TEX.pop(old, None)
             c = _rgb(fill) or (0, 0, 0)
-            lab = _CoreLabel(text=str(text), font_size=size, bold=bold, color=(*c, 1),
+            lab = _CoreLabel(text=str(text), font_size=size, font_name=face, bold=False, color=(*c, 1),
                              halign="center", text_size=(wrap, None) if wrap else (None, None))
             lab.refresh()
             tex = lab.texture
@@ -1237,7 +1239,10 @@ from campo_magnetico import MagneticAbility
 
 from ai import RivalAI, ENHANCED_COOLDOWN
 
-class Game(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar, TournamentView):
+from front_menu import FrontMenu
+
+
+class MatchGame(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar, TournamentView):
     def __init__(self, root):
         self.root = root
         root.title("Copa Mundial de Chapas")
@@ -1298,6 +1303,7 @@ class Game(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar, Tour
         self.selected_country = None
         self.visual = VisualResources(self)
         self.snd.on_event = self.sound_visual_event
+        self.front_init()
         self.render()
         self.tick()
 
@@ -2782,9 +2788,10 @@ class Game(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar, Tour
 
     # ---------------- bucle
     def tick(self):
+        self.front_tick()
         stamp=time.perf_counter()
         now=vnow();elapsed=max(0,now-self.last_t);dt=min(.1,elapsed);self.last_t=now
-        active=not self.paused and not self.visual.transitioning
+        active=not self.paused and not self.visual.transitioning and not self.nav.busy and self.front_paused_at is None
         if active:
             if self.state=='match':self.match_update(dt)
             elif self.state=='pens':self.pens_update()
@@ -3036,6 +3043,11 @@ class Game(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar, Tour
         cv.create_text(cw / 2, row2, text=info, fill=col, font=self.F(0.85), width=cw * 0.98)
 
 
+class Game(FrontMenu, MatchGame):
+    """Original match implementation with a separate navigation layer."""
+    pass
+
+
 class MundialApp(_App):
     title = "Mundialito"
 
@@ -3043,6 +3055,16 @@ class MundialApp(_App):
         root = tk.Tk()
         self.game = Game(root)
         return root.widget
+
+    def on_pause(self):
+        self.game.front_suspend()
+        return True
+
+    def on_resume(self):
+        self.game.front_resume()
+
+    def on_stop(self):
+        self.game.front_stop()
 
 
 if __name__ == "__main__":
