@@ -253,10 +253,15 @@ class FrontMenu:
         try:
             image=self.visual.texture('menu_mundial.png').texture
         except Exception:
-            image=None  # JPG no empaquetado: el menú sigue con fondo verde
+            try:
+                image=self.visual.texture('menu_mundial.jpg').texture
+            except Exception:
+                image=None  # imagen no empaquetada: el menú sigue con fondo verde
         if image is not None:
-            # Contain, not stretch/crop: the cup and token mountain always remain visible.
-            s=min(w/image.width,h/image.height)
+            # Cover sin deformar: cubre toda la pantalla hasta el borde inferior.
+            # En pantallas más altas que la ilustración solo se recortan los
+            # bordes laterales por igual; la copa y la montaña quedan centradas.
+            s=max(w/image.width,h/image.height)
             iw,ih=image.width*s,image.height*s
             with self.cv.canvas:
                 Color(1,1,1,1)
@@ -385,7 +390,7 @@ class FrontMenu:
         self.cv.create_text(w/2,h*.58,text=self.post_txt,fill='#ffffff',font=self.front_font(w*.045),width=w*.86)
         if self.front_error:
             self.cv.create_text(w/2,h*.67,text=self.front_error,fill='#ffca73',font=self.front_font(min(18,w*.04)),width=w*.88)
-        self.front_button(w/2,h*.77,w*.8,56,'REINTENTAR' if self.front_error else 'OTRO AMISTOSO',self.retry_friendly if self.front_error else lambda:self.front_navigate('friends'))
+        self.front_button(w/2,h*.87,min(w*.88,460),min(84,max(60,h*.08)),'REINTENTAR' if self.front_error else 'OTRO AMISTOSO',self.retry_friendly if self.front_error else lambda:self.front_navigate('friends'))
         self.draw_back()
 
     def front_suspend(self):

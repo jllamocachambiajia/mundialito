@@ -155,104 +155,196 @@ class ShopEffects:
         entry = ITEMS[item_id]
         return self.shop.state['aura_colors'].get(item_id, entry.get('color', '#ffd83d'))
 
-    def draw_equipped_aura(self, sx, sy, radius):
-        item_id = self.shop.state['aura']
-        if item_id == 'aura_none':
-            return
-        entry = ITEMS[item_id]
+    # ---------- indicador de selección original con apariencia cosmética
+    # El motor calcula el pulso y el grosor como siempre; aquí solo cambia el
+    # color o diseño del MISMO anillo. Nunca se dibuja un segundo círculo.
+    def _mix(self, first, second, amount):
+        a = [int(first[i:i+2], 16) for i in (1, 3, 5)]
+        b = [int(second[i:i+2], 16) for i in (1, 3, 5)]
+        return '#%02x%02x%02x' % tuple(int(a[i]+(b[i]-a[i])*amount) for i in range(3))
+
+    def _coin_symbol(self, x, y, size, color):
+        self.cv.create_oval(x-size/2, y-size/2, x+size/2, y+size/2,
+                            fill=color, outline='#fff0a0', width=1)
+        self.cv.create_oval(x-size*.22, y-size*.22, x+size*.22, y+size*.22,
+                            outline='#a96b12', width=1)
+
+    def draw_aura_ring(self, item_id, sx, sy, ring, width, now):
+        """Dibuja el anillo de radio `ring` (ya pulsado) con el diseño del aura."""
+        cv = self.cv
+        entry = ITEMS.get(item_id) or ITEMS['aura_none']
         style = entry['style']
+        if style == 'none':
+            cv.create_oval(sx-ring, sy-ring, sx+ring, sy+ring, outline='#fff36b', width=width)
+            return
         color = self._aura_color(item_id)
-        now = self.vnow() if hasattr(self, 'vnow') else __import__('main').vnow()
-        glow = radius*1.43
-        self.cv.create_oval(sx-glow, sy-glow, sx+glow, sy+glow,
-                            fill=color, width=0, alpha=.075)
         if style == 'solid':
-            self.cv.create_oval(sx-glow, sy-glow, sx+glow, sy+glow,
-                                outline=color, width=max(1.5, radius*.13), alpha=.85)
+            cv.create_oval(sx-ring, sy-ring, sx+ring, sy+ring, outline=color, width=width)
         elif style in ('coins', 'hearts', 'stars'):
-            for index in range(7):
-                angle = now*.8 + index*math.tau/7
-                x, y = sx+math.cos(angle)*radius*1.34, sy+math.sin(angle)*radius*1.34
-                size = radius*.36
+            # Aro fino del mismo indicador decorado con sus símbolos sobre la circunferencia.
+            cv.create_oval(sx-ring, sy-ring, sx+ring, sy+ring, outline=color, width=max(1, width*.55))
+            count = 8
+            size = max(5, ring*.36)
+            for index in range(count):
+                angle = now*.6 + index*math.tau/count
+                x, y = sx+math.cos(angle)*ring, sy+math.sin(angle)*ring
                 if style == 'coins':
-                    self.cv.create_oval(x-size/2, y-size/2, x+size/2, y+size/2,
-                                        fill=color, outline='#fff0a0', width=1)
-                    self.cv.create_oval(x-size*.19, y-size*.19, x+size*.19, y+size*.19,
-                                        outline='#a96b12', width=1)
+                    self._coin_symbol(x, y, size, color)
                 elif style == 'hearts':
-                    self._heart(x, y, size, color)
+                    self._heart(x, y-size*.08, size, color)
                 else:
-                    self.cv.create_polygon(self._star_points(x, y, size*.58, size*.25), fill=color, width=0)
+                    cv.create_polygon(self._star_points(x, y, size*.58, size*.25,
+                                                        -math.pi/2+angle), fill=color, width=0)
         else:
-            colors = {
-                'gradient': (color, '#56d9ff'), 'duo': ('#ff73b9', '#56d9ff'),
-                'rainbow': ('#ff5252', '#ffd83d', '#59dc72', '#56d9ff', '#a879ff'),
-            }.get(style, (color, '#ffffff'))
-            count = len(colors)
-            for index in range(18):
-                angle = index*20 + (now*75 if style == 'rainbow' else 0)
-                selected = colors[(index*count//18 + (int(now*2) if style == 'rainbow' else 0)) % count]
-                self.cv.create_arc(sx-glow, sy-glow, sx+glow, sy+glow,
-                                   start=angle, extent=25, style='arc', outline=selected,
-                                   width=max(2, radius*.16))
+            if style == 'rainbow':
+                stops = ('#ff5252', '#ff9f3d', '#ffd83d', '#59dc72', '#56d9ff', '#4388ff', '#a879ff', '#ff5252')
+            elif style == 'duo':
+                stops = ('#ff73b9', '#56d9ff', '#ff73b9')
+            else:
+                stops = (color, '#56d9ff', color)
+            segments = 24
+            spin = (now*90) % 360 if style == 'rainbow' else 0
+            for index in range(segments):
+                t = index/segments
+                pos = t*(len(stops)-1)
+                k = min(len(stops)-2, int(pos))
+                shade = self._mix(stops[k], stops[k+1], pos-k)
+                cv.create_arc(sx-ring, sy-ring, sx+ring, sy+ring, start=spin+index*360/segments,
+                              extent=360/segments+1.5, style='arc', outline=shade, width=width)
+
+    def draw_selection_ring(self, body, sx, sy, R, pulse):
+        if not getattr(self, 'shop', None):
+            return super().draw_selection_ring(body, sx, sy, R, pulse)
+        from main import vnow
+        self.draw_aura_ring(self.shop.state['aura'], sx, sy, R*pulse, max(1.5, R*0.14), vnow())
+
+    # ---------- accesorios y apariencias: un solo dibujo para tienda y partido
+    def draw_accessory(self, style, sx, sy, radius):
+        cv = self.cv
+        if style == 'moustache':
+            for side in (-1, 1):
+                cv.create_oval(sx+side*radius*.30-radius*.26, sy-radius*.05, sx+side*radius*.30+radius*.26,
+                               sy+radius*.16, fill='#302219', width=0)
+                cv.create_oval(sx+side*radius*.56-radius*.08, sy-radius*.16, sx+side*radius*.56+radius*.08,
+                               sy+radius*.02, fill='#302219', width=0)
+        elif style == 'party_hat':
+            cv.create_polygon([sx-radius*.65, sy-radius*.72, sx+radius*.45, sy-radius*.72,
+                               sx-radius*.15, sy-radius*1.75], fill='#ffcf3f', outline='#ff6f61', width=2)
+            cv.create_line(sx-radius*.48, sy-radius*1.0, sx+radius*.22, sy-radius*1.0, fill='#ff6f61', width=max(1, radius*.08))
+            cv.create_line(sx-radius*.33, sy-radius*1.3, sx+0, sy-radius*1.3, fill='#43b7ff', width=max(1, radius*.08))
+            cv.create_oval(sx-radius*.27, sy-radius*1.87, sx-radius*.03, sy-radius*1.63,
+                           fill='#ff73b9', width=0)
+        elif style == 'monocle':
+            rr = radius*.30
+            cv.create_oval(sx+radius*.12, sy-radius*.34, sx+radius*.12+rr*2, sy-radius*.34+rr*2,
+                           fill='#cfe9ff', outline='#f5d87b', width=max(1.5, radius*.10), alpha=.35)
+            cv.create_line(sx+radius*.65, sy, sx+radius*.76, sy+radius*.72,
+                           fill='#f5d87b', width=max(1, radius*.06))
+        elif style == 'sunglasses':
+            cv.create_rectangle(sx-radius*.68, sy-radius*.36, sx-radius*.05, sy+radius*.03,
+                                fill='#161a22', outline='#f5d87b', width=1)
+            cv.create_rectangle(sx+radius*.05, sy-radius*.36, sx+radius*.68, sy+radius*.03,
+                                fill='#161a22', outline='#f5d87b', width=1)
+            cv.create_line(sx-radius*.05, sy-radius*.18, sx+radius*.05, sy-radius*.18,
+                           fill='#161a22', width=max(2, radius*.08))
+            cv.create_line(sx-radius*.55, sy-radius*.28, sx-radius*.35, sy-radius*.12, fill='#5c6577', width=1)
+            cv.create_line(sx+radius*.18, sy-radius*.28, sx+radius*.38, sy-radius*.12, fill='#5c6577', width=1)
+        elif style == 'bandaids':
+            cv.create_rectangle(sx-radius*.68, sy+radius*.26, sx-radius*.12, sy+radius*.46,
+                                fill='#f2c69b', outline='#a87855', width=1)
+            cv.create_rectangle(sx-radius*.50, sy+radius*.30, sx-radius*.30, sy+radius*.42,
+                                fill='#e0ab7d', width=0)
+            cv.create_rectangle(sx+radius*.20, sy-radius*.63, sx+radius*.52, sy-radius*.45,
+                                fill='#f2c69b', outline='#a87855', width=1)
+
+    def draw_star_look(self, style, sx, sy, R):
+        """Peinados y barbas estilizados, distintos entre sí; pueden salir del círculo."""
+        cv = self.cv
+        if style == 'messi':
+            hair, light, beard = '#4b2e1c', '#7a5236', '#2e1c11'
+            # Laterales ordenados, no rapados.
+            cv.create_arc(sx-R*1.0, sy-R*1.0, sx+R*1.0, sy+R*1.0, start=140, extent=30,
+                          style='arc', outline=hair, width=max(2, R*.13))
+            cv.create_arc(sx-R*1.0, sy-R*1.0, sx+R*1.0, sy+R*1.0, start=10, extent=30,
+                          style='arc', outline=hair, width=max(2, R*.13))
+            # Volumen superior con dirección lateral hacia la derecha.
+            cv.create_oval(sx-R*.86, sy-R*1.14, sx+R*.70, sy-R*.44, fill=hair, width=0)
+            cv.create_oval(sx-R*.25, sy-R*1.26, sx+R*.96, sy-R*.58, fill=hair, width=0)
+            for k in range(5):
+                x0 = sx-R*(.66-k*.30)
+                cv.create_line(x0, sy-R*.62, x0+R*.42, sy-R*(1.02+.04*(k % 2)), fill=light, width=max(1, R*.07))
+            # Puntas del flequillo cayendo al costado.
+            for k in range(4):
+                x0 = sx-R*(.55-k*.32)
+                cv.create_polygon([x0, sy-R*.66, x0+R*.26, sy-R*.66, x0+R*.24, sy-R*.40], fill=hair, width=0)
+            # Barba corta definida, más oscura que el cabello.
+            cv.create_arc(sx-R*1.02, sy-R*1.0, sx+R*1.02, sy+R*1.04, start=212, extent=116,
+                          style='arc', outline=beard, width=max(3, R*.22))
+            cv.create_oval(sx-R*.30, sy+R*.80, sx+R*.30, sy+R*1.10, fill=beard, width=0)
+        elif style == 'neymar':
+            hair, light, fade = '#17110e', '#4a3628', '#5a524c'
+            # Degradado lateral visible: dos bandas de tono progresivo.
+            for start in (128, 2):
+                cv.create_arc(sx-R*1.0, sy-R*1.0, sx+R*1.0, sy+R*1.0, start=start, extent=50,
+                              style='arc', outline=fade, width=max(2, R*.18))
+                cv.create_arc(sx-R*.94, sy-R*.94, sx+R*.94, sy+R*.94, start=start+8, extent=34,
+                              style='arc', outline='#2e2723', width=max(1, R*.10))
+            # Parte superior larga y rizada con mechones.
+            cv.create_oval(sx-R*.62, sy-R*1.12, sx+R*.62, sy-R*.52, fill=hair, width=0)
+            curls = [(-.50, -.78), (-.28, -.98), (-.02, -1.08), (.25, -.99), (.48, -.80),
+                     (-.38, -1.18), (-.10, -1.30), (.18, -1.25), (.40, -1.10), (-.15, -.80), (.15, -.82)]
+            for dx, dy in curls:
+                rr = R*.19
+                x, y = sx+R*dx, sy+R*dy
+                cv.create_oval(x-rr, y-rr, x+rr, y+rr, fill=hair, width=0)
+                cv.create_arc(x-rr*.75, y-rr*.75, x+rr*.75, y+rr*.75, start=40, extent=150,
+                              style='arc', outline=light, width=max(1, R*.05))
+            # Bigote fino y perilla tipo candado.
+            cv.create_arc(sx-R*.86, sy-R*.70, sx+R*.86, sy+R*1.02, start=235, extent=70,
+                          style='arc', outline=hair, width=max(2, R*.10))
+            cv.create_oval(sx-R*.16, sy+R*.84, sx+R*.16, sy+R*1.12, fill=hair, width=0)
+        elif style == 'ronaldo':
+            hair, shine = '#1e140e', '#5a4130'
+            # Laterales cortos y limpios.
+            for start in (138, 8):
+                cv.create_arc(sx-R*.99, sy-R*.99, sx+R*.99, sy+R*.99, start=start, extent=34,
+                              style='arc', outline=hair, width=max(1.5, R*.11))
+            # Parte superior moderada, peinada hacia atrás con contorno nítido.
+            cv.create_oval(sx-R*.74, sy-R*1.10, sx+R*.74, sy-R*.50, fill=hair, width=0)
+            cv.create_oval(sx-R*.05, sy-R*1.20, sx+R*.66, sy-R*.80, fill=hair, width=0)
+            for k, inset in enumerate((.18, .34, .50)):
+                cv.create_arc(sx-R*(.74-inset), sy-R*(1.06-inset*.25), sx+R*(.74-inset*.4), sy-R*(.52+inset*.1),
+                              start=25, extent=135, style='arc', outline=shine, width=max(1, R*.06))
+            # Rostro limpio, sin barba.
+        elif style == 'mbappe':
+            hair, fade = '#0b0a0a', '#3b3633'
+            # Buzz cut: banda corta pegada al contorno, sin volumen.
+            cv.create_arc(sx-R*.92, sy-R*.92, sx+R*.92, sy+R*.92, start=32, extent=116,
+                          style='arc', outline=hair, width=max(3, R*.30))
+            # Línea frontal recta y definida.
+            cv.create_line(sx-R*.48, sy-R*.70, sx+R*.48, sy-R*.70, fill=hair, width=max(2, R*.10))
+            # Degradado progresivo en laterales y nuca.
+            for start in (148, 12):
+                cv.create_arc(sx-R*.95, sy-R*.95, sx+R*.95, sy+R*.95, start=start, extent=22,
+                              style='arc', outline=fade, width=max(2, R*.18))
+            # Textura corta discreta.
+            for k in range(9):
+                a = math.radians(40+k*12.5)
+                x, y = sx+math.cos(a)*R*.86, sy-math.sin(a)*R*.86
+                rr = max(.6, R*.035)
+                cv.create_oval(x-rr, y-rr, x+rr, y+rr, fill='#2b2725', width=0)
 
     def draw_equipped_accessories(self, sx, sy, radius, team, num):
-        cv = self.cv
         for item_id in self.shop.state['accessories']:
-            style = ITEMS[item_id]['style']
-            if style == 'moustache':
-                cv.create_arc(sx-radius*.55, sy+radius*.02, sx, sy+radius*.48,
-                              start=190, extent=160, style='arc', outline='#302219', width=max(2, radius*.14))
-                cv.create_arc(sx, sy+radius*.02, sx+radius*.55, sy+radius*.48,
-                              start=190, extent=160, style='arc', outline='#302219', width=max(2, radius*.14))
-            elif style == 'party_hat':
-                cv.create_polygon([sx-radius*.65, sy-radius*.72, sx+radius*.45, sy-radius*.72,
-                                   sx-radius*.15, sy-radius*1.75], fill='#ffcf3f', outline='#ff6f61', width=2)
-                cv.create_oval(sx-radius*.25, sy-radius*1.85, sx-radius*.05, sy-radius*1.65,
-                               fill='#ff73b9', width=0)
-            elif style == 'monocle':
-                rr = radius*.30
-                cv.create_oval(sx+radius*.12, sy-radius*.34, sx+radius*.12+rr*2, sy-radius*.34+rr*2,
-                               outline='#f5d87b', width=max(1.5, radius*.08))
-                cv.create_line(sx+radius*.65, sy, sx+radius*.76, sy+radius*.72,
-                               fill='#f5d87b', width=max(1, radius*.05))
-            elif style == 'sunglasses':
-                cv.create_rectangle(sx-radius*.68, sy-radius*.36, sx-radius*.05, sy+radius*.03,
-                                    fill='#161a22', outline='#f5d87b', width=1)
-                cv.create_rectangle(sx+radius*.05, sy-radius*.36, sx+radius*.68, sy+radius*.03,
-                                    fill='#161a22', outline='#f5d87b', width=1)
-                cv.create_line(sx-radius*.05, sy-radius*.18, sx+radius*.05, sy-radius*.18,
-                               fill='#161a22', width=max(2, radius*.08))
-            elif style == 'bandaids':
-                cv.create_rectangle(sx-radius*.68, sy+radius*.26, sx-radius*.12, sy+radius*.46,
-                                    fill='#f2c69b', outline='#a87855', width=1)
-                cv.create_rectangle(sx+radius*.20, sy-radius*.63, sx+radius*.52, sy-radius*.45,
-                                    fill='#f2c69b', outline='#a87855', width=1)
+            self.draw_accessory(ITEMS[item_id]['style'], sx, sy, radius)
         appearance = self.shop.appearance_for(team)
         if not appearance or num != appearance['dorsal']:
             return
-        style = appearance['style']
-        hair = '#241b18' if style != 'messi' else '#3b281f'
-        if style == 'mbappe':
-            cv.create_arc(sx-radius*.74, sy-radius*.87, sx+radius*.74, sy+radius*.12,
-                          start=5, extent=170, style='arc', outline=hair, width=max(3, radius*.22))
-        elif style == 'neymar':
-            for index in range(5):
-                x = sx-radius*.55+index*radius*.27
-                cv.create_polygon([x-radius*.16, sy-radius*.67, x+radius*.16, sy-radius*.67,
-                                   x, sy-radius*(1.18+.12*(index%2))], fill=hair, width=0)
-        else:
-            cv.create_arc(sx-radius*.78, sy-radius*.95, sx+radius*.78, sy+radius*.1,
-                          start=0, extent=180, style='arc', outline=hair, width=max(4, radius*.26))
-        if style == 'messi':
-            cv.create_arc(sx-radius*.62, sy+radius*.08, sx+radius*.62, sy+radius*.82,
-                          start=180, extent=180, style='arc', outline=hair, width=max(3, radius*.18))
+        self.draw_star_look(appearance['style'], sx, sy, radius)
 
     def _jersey(self, sx, sy, radius, team, keeper=False, side=0, num=None):
         cosmetic = bool(getattr(self, 'shop', None) and self.state in ('match', 'pens')
                         and side == 0 and team == getattr(self, 'user', None))
-        if cosmetic:
-            self.draw_equipped_aura(sx, sy, radius)
         result = super()._jersey(sx, sy, radius, team, keeper, side, num)
         if cosmetic:
             self.draw_equipped_accessories(sx, sy, radius, team, num)
@@ -262,7 +354,9 @@ class ShopEffects:
     def draw_custom_ball(self, sx, sy, radius, original_radius):
         if not getattr(self, 'shop', None) or self.state not in ('match', 'pens'):
             return False
-        item_id = self.shop.state['ball']
+        return self.draw_ball_style(self.shop.state['ball'], sx, sy, radius)
+
+    def draw_ball_style(self, item_id, sx, sy, radius):
         if item_id == 'ball_classic':
             return False
         entry = ITEMS[item_id]
@@ -380,6 +474,9 @@ class ShopEffects:
             glow = radius*1.43
             cv.create_oval(sx-glow*1.6, sy-glow*1.6, sx+glow*1.6, sy+glow*1.6,
                            fill='#ffe987', width=0, alpha=.055)
+            if self.selection_ring_visible(body):
+                from main import vnow
+                self.draw_selection_ring(body, sx, sy, radius, 1.25 + 0.1 * math.sin(vnow() * 8))
             self.jersey(sx, sy, radius, self.teams[0], body.keeper, 0, body.num)
         for keeper in own:
             if math.hypot(self.ball.x-keeper.x, self.ball.y-keeper.y) <= keeper.r*1.7:

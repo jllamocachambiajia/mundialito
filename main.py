@@ -2842,6 +2842,15 @@ class MatchGame(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar,
         self.root.after(16,self.tick)
 
     # ---------------- dibujo de partido
+    def selection_ring_visible(self, b):
+        return (self.state == "match" and self.can_shoot(0) and b.team == 0
+                and not self.fire.selected(b))
+
+    def draw_selection_ring(self, b, sx, sy, R, pulse):
+        # Indicador original de selección (pulso de siempre); la tienda solo cambia su diseño.
+        self.cv.create_oval(sx - R * pulse, sy - R * pulse, sx + R * pulse, sy + R * pulse,
+                            outline="#fff36b", width=max(1.5, R * 0.14))
+
     def draw(self):
         cv = self.cv
         cv.delete("all")
@@ -2864,8 +2873,7 @@ class MatchGame(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar,
                                outline="#00e5ff", width=max(2, R * 0.16))
             if active and b.team == 0 and not self.fire.selected(b):
                 pulse = 1.25 + 0.1 * math.sin(vnow() * 8)
-                cv.create_oval(sx - R * pulse, sy - R * pulse, sx + R * pulse, sy + R * pulse,
-                               outline="#fff36b", width=max(1.5, R * 0.14))
+                self.draw_selection_ring(b, sx, sy, R, pulse)
             if self.state == 'match':
                 self.draw_fire_ring(b, sx, sy, R)
             self.jersey(sx, sy, R, self.teams[b.team], b.keeper, b.team, b.num)
