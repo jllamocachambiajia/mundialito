@@ -251,7 +251,7 @@ class FrontMenu:
         w,h=self.cw,self.ch
         self.cv.create_rectangle(0,0,w,h,fill='#052d20',width=0)
         try:
-            image=self.visual.texture('menu_mundial.jpg').texture
+            image=self.visual.texture('menu_mundial.png').texture
         except Exception:
             image=None  # JPG no empaquetado: el menú sigue con fondo verde
         if image is not None:
