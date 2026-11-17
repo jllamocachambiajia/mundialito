@@ -13,10 +13,18 @@ class MenuAudio:
             from kivy.core.audio import SoundLoader
             loader = SoundLoader.load
         self.clock, self.enabled = clock, enabled
-        self.music = loader(asset('sounds', 'music', 'musica.wav'))
-        self.effect = loader(asset('sounds', 'effects', 'carga.wav'))
-        with wave.open(asset('sounds', 'music', 'musica.wav')) as f:
-            self.duration = f.getnframes() / f.getframerate()
+        def safe(path):
+            try:
+                return loader(path)
+            except Exception:
+                return None  # sonido ausente o no compatible: el juego sigue sin él
+        self.music = safe(asset('sounds', 'music', 'musica.wav'))
+        self.effect = safe(asset('sounds', 'effects', 'carga.wav'))
+        try:
+            with wave.open(asset('sounds', 'music', 'musica.wav')) as f:
+                self.duration = f.getnframes() / f.getframerate()
+        except Exception:
+            self.duration = 87.516
         self.started = None
         self.depart = None
         self.depart_volume = 0

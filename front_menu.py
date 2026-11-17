@@ -267,13 +267,17 @@ class FrontMenu:
     def draw_home(self):
         w,h=self.cw,self.ch
         self.cv.create_rectangle(0,0,w,h,fill='#052d20',width=0)
-        image=self.visual.texture('menu_mundial.jpg').texture
-        # Contain, not stretch/crop: the cup and token mountain always remain visible.
-        s=min(w/image.width,h/image.height)
-        iw,ih=image.width*s,image.height*s
-        with self.cv.canvas:
-            Color(1,1,1,1)
-            Rectangle(texture=image,pos=((w-iw)/2,h-ih),size=(iw,ih))
+        try:
+            image=self.visual.texture('menu_mundial.jpg').texture
+        except Exception:
+            image=None  # JPG no empaquetado: el menú sigue con fondo verde
+        if image is not None:
+            # Contain, not stretch/crop: the cup and token mountain always remain visible.
+            s=min(w/image.width,h/image.height)
+            iw,ih=image.width*s,image.height*s
+            with self.cv.canvas:
+                Color(1,1,1,1)
+                Rectangle(texture=image,pos=((w-iw)/2,h-ih),size=(iw,ih))
         title_size=min(w*.17,h*.073)
         center=h*.485
         self.cv.create_text(w*.46,center,text='MUNDIAL',fill='#b5f65a',font=self.front_font(title_size,True))

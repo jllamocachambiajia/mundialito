@@ -411,6 +411,8 @@ class _CanvasWidget(_Widget):
         wrap = int(width) if width else None
         family = font[0] if isinstance(font, tuple) else "Oswald"
         face = asset("fonts", "Teko-Bold.ttf" if family == "Teko" or (str(text).isdigit() and bold) else "Oswald.ttf")
+        if not _os.path.isfile(face):
+            face = None  # TTF no empaquetado en el APK: usar la fuente interna de Kivy
         key = (text, size, bold, fill, wrap, face)
         tex = self.TEX.get(key)
         if tex is None:
@@ -418,8 +420,11 @@ class _CanvasWidget(_Widget):
                 for old in list(self.TEX)[:150]:
                     self.TEX.pop(old, None)
             c = _rgb(fill) or (0, 0, 0)
-            lab = _CoreLabel(text=str(text), font_size=size, font_name=face, bold=False, color=(*c, 1),
-                             halign="center", text_size=(wrap, None) if wrap else (None, None))
+            opts = dict(text=str(text), font_size=size, bold=False, color=(*c, 1),
+                        halign="center", text_size=(wrap, None) if wrap else (None, None))
+            if face:
+                opts["font_name"] = face
+            lab = _CoreLabel(**opts)
             lab.refresh()
             tex = lab.texture
             self.TEX[key] = tex
@@ -3048,23 +3053,84 @@ class Game(FrontMenu, MatchGame):
     pass
 
 
+def _guardar_error(texto):
+    """Guarda el último error en la carpeta privada de la app (y en el log de Android)."""
+    print(texto)
+    try:
+        app = _App.get_running_app()
+        carpeta = app.user_data_dir if app else _os.getcwd()
+        with open(_os.path.join(carpeta, "ultimo_error.txt"), "w", encoding="utf-8") as f:
+            f.write(texto)
+    except Exception:
+        pass
+
+
+def _pantalla_error(texto):
+    """Muestra el error en pantalla en lugar de cerrar el APK."""
+    from kivy.uix.label import Label
+    from kivy.uix.scrollview import ScrollView
+    sv = ScrollView()
+    lab = Label(text="ERROR AL INICIAR MUNDIALITO\n(haz captura y envíala)\n\n" + texto[-3000:],
+                halign="left", valign="top", size_hint_y=None, font_size="12sp",
+                color=(1, 1, 0.6, 1))
+    lab.bind(width=lambda w, v: setattr(w, "text_size", (v, None)),
+             texture_size=lambda w, v: setattr(w, "height", v[1]))
+    sv.add_widget(lab)
+    return sv
+
+
+try:
+    from kivy.base import ExceptionHandler as _ExcH, ExceptionManager as _ExcM
+
+    class _NoCerrar(_ExcH):
+        """Un error dentro de un dibujo/temporizador ya no cierra el juego."""
+        avisado = False
+
+        def handle_exception(self, inst):
+            import traceback
+            texto = "".join(traceback.format_exception(type(inst), inst, inst.__traceback__))
+            _guardar_error(texto)
+            if not _NoCerrar.avisado:
+                _NoCerrar.avisado = True
+                try:
+                    _Window.clear_widgets()
+                    _Window.add_widget(_pantalla_error(texto))
+                except Exception:
+                    return _ExcM.RAISE
+            return _ExcM.PASS
+
+    _ExcM.add_handler(_NoCerrar())
+except Exception:
+    pass
+
+
 class MundialApp(_App):
     title = "Mundialito"
 
     def build(self):
-        root = tk.Tk()
-        self.game = Game(root)
-        return root.widget
+        self.game = None
+        try:
+            root = tk.Tk()
+            self.game = Game(root)
+            return root.widget
+        except Exception:
+            import traceback
+            texto = traceback.format_exc()
+            _guardar_error(texto)
+            return _pantalla_error(texto)
 
     def on_pause(self):
-        self.game.front_suspend()
+        if self.game:
+            self.game.front_suspend()
         return True
 
     def on_resume(self):
-        self.game.front_resume()
+        if self.game:
+            self.game.front_resume()
 
     def on_stop(self):
-        self.game.front_stop()
+        if self.game:
+            self.game.front_stop()
 
 
 if __name__ == "__main__":
