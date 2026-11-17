@@ -156,7 +156,8 @@ class FireAbility:
                 speed = math.hypot(vx, vy)
                 if speed > 0:
                     ball.vx, ball.vy = vx*1.44, vy*1.44
-                    cap = MAX_DRAG*POWER*POWER_FACTOR*1.44
+                    # El tope proviene del disparo real: 150 % base o su pasiva humana.
+                    cap = math.hypot(vx, vy)*1.44
                     magnitude = ball.speed()
                     if magnitude > cap:
                         ball.vx *= cap/magnitude; ball.vy *= cap/magnitude

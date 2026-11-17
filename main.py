@@ -1088,7 +1088,7 @@ def collide(a, b):
     b.vx += j * nx / b.m; b.vy += j * ny / b.m
 
 
-def step(bodies, ball, scale=1.0, zone=None, catcher=None, limit=None, touch=None, collision_policy=None, goal=None, body_scale=None):
+def step(bodies, ball, scale=1.0, zone=None, catcher=None, limit=None, touch=None, collision_policy=None, goal=None, body_scale=None, friction_policy=None, collision_done=None):
     """Avanza la física un fotograma.
     scale: velocidad del tiempo (0,75 = cámara lenta). zone(b): factor de velocidad del arquero
     según esté dentro/fuera del área chica. catcher: arquero que puede atrapar el balón.
@@ -1123,6 +1123,8 @@ def step(bodies, ball, scale=1.0, zone=None, catcher=None, limit=None, touch=Non
             for k in range(i + 1, len(bodies)):
                 if collision_policy is None or collision_policy(bodies[i], bodies[k]):
                     collide(bodies[i], bodies[k])
+                    if collision_done is not None:
+                        collision_done(bodies[i], bodies[k])
         # Collisions and magnetic repulsion can move a keeper AFTER integration.
         if limit is not None:
             for body in bodies:
@@ -1130,6 +1132,8 @@ def step(bodies, ball, scale=1.0, zone=None, catcher=None, limit=None, touch=Non
                     limit(body)
     for b in bodies:
         f = FRICTION if b is ball else PLAYER_FRICTION
+        if friction_policy is not None:
+            f = friction_policy(b, f)
         if scale != 1.0:
             f = f ** scale
         b.vx *= f; b.vy *= f
@@ -1245,6 +1249,7 @@ from campo_magnetico import MagneticAbility
 from ai import RivalAI, ENHANCED_COOLDOWN
 
 from front_menu import FrontMenu
+from shop_view import ShopView
 
 
 class MatchGame(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar, TournamentView):
@@ -1715,6 +1720,30 @@ class MatchGame(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar,
         gs = int(self.clock * 60 / REAL_PER_MIN)
         return f"{gs // 60:02d}:{gs % 60:02d}"
 
+    def player_power_factor(self, body):
+        return 1.0
+
+    def player_fire_factor(self, body):
+        return 1.5
+
+    def player_shot_interval(self):
+        return COOLDOWN
+
+    def friction_for(self, body, base):
+        return base
+
+    def collision_done(self, a, b):
+        pass
+
+    def draw_stadium_back(self):
+        pass
+
+    def draw_stadium_front(self):
+        pass
+
+    def draw_custom_ball(self, sx, sy, radius, original_radius):
+        return False
+
     def can_shoot(self, team, now=None, keeper=False):
         now = vnow() if now is None else now
         if self.phase != "play":
@@ -2131,7 +2160,7 @@ class MatchGame(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar,
         fire_scale = self.fire.scale(dt)               # física: fuego (PAUSA va por cuerpo)
         lim = self.keeper_limit                        # v8: barrera del área grande
         if self.phase == "goal":
-            step(self.bodies, self.ball, fire_scale, None, None, lim, collision_policy=self.match_collision, body_scale=self.magnetic_body_scale)
+            step(self.bodies, self.ball, fire_scale, None, None, lim, collision_policy=self.match_collision, body_scale=self.magnetic_body_scale, friction_policy=self.friction_for, collision_done=self.collision_done)
             
             if now >= self.resume_at:
                 self.reset_positions()
@@ -2152,7 +2181,7 @@ class MatchGame(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar,
         if touch is not None and (self.magnetic_active_body(touch['k']) or self.magnetic_stunned(touch['k'])):
             touch = None
 
-        step(self.bodies, self.ball, sl, None, None, lim, touch, self.match_collision, body_scale=self.magnetic_body_scale)
+        step(self.bodies, self.ball, sl, None, None, lim, touch, self.match_collision, body_scale=self.magnetic_body_scale, friction_policy=self.friction_for, collision_done=self.collision_done)
         
         self.fire_update(0)
         if touch and touch["hit"]:                      # bloqueo + rebote: velocidad normal
@@ -2817,6 +2846,7 @@ class MatchGame(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar,
         cv = self.cv
         cv.delete("all")
         cv.cached(('pitch',self.cw,self.ch,self.state),self.draw_pitch)
+        self.draw_stadium_back()
         if self.state == 'match':
             self.draw_fire_aura()
 
@@ -2856,16 +2886,18 @@ class MatchGame(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar,
         R = R0 * lift_scale                             # solo dibujo: radio físico intacto
         lift = (lift_scale - 1.0) * R0 * 2.2
         shadow = R0 * (1 + .25 * (lift_scale - 1))
-        cv.create_oval(sx - shadow + 2 + lift * .35, sy - shadow + 3 + lift * .2, sx + shadow + 2 + lift * .35,
-                       sy + shadow + 3 + lift * .2, fill="#062b14", width=0, alpha=1 - .45 * (lift_scale - 1))
-        sy -= lift
-        cv.create_oval(sx - R, sy - R, sx + R, sy + R, fill="#ffffff", outline="#111111", width=max(1, R * 0.12))
-        rot = (b.x + b.y) * 0.08
-        for k in range(5):
-            a = rot + k * math.tau / 5
-            px, py = sx + math.cos(a) * R * 0.55, sy + math.sin(a) * R * 0.55
-            cv.create_oval(px - R * 0.2, py - R * 0.2, px + R * 0.2, py + R * 0.2, fill="#111111", width=0)
-        cv.create_oval(sx - R * 0.25, sy - R * 0.25, sx + R * 0.25, sy + R * 0.25, fill="#111111", width=0)
+        if not self.draw_custom_ball(sx, sy-lift, R, R0):
+            cv.create_oval(sx - shadow + 2 + lift * .35, sy - shadow + 3 + lift * .2, sx + shadow + 2 + lift * .35,
+                           sy + shadow + 3 + lift * .2, fill="#062b14", width=0, alpha=1 - .45 * (lift_scale - 1))
+            sy -= lift
+            cv.create_oval(sx - R, sy - R, sx + R, sy + R, fill="#ffffff", outline="#111111", width=max(1, R * 0.12))
+            rot = (b.x + b.y) * 0.08
+            for k in range(5):
+                a = rot + k * math.tau / 5
+                px, py = sx + math.cos(a) * R * 0.55, sy + math.sin(a) * R * 0.55
+                cv.create_oval(px - R * 0.2, py - R * 0.2, px + R * 0.2, py + R * 0.2, fill="#111111", width=0)
+            cv.create_oval(sx - R * 0.25, sy - R * 0.25, sx + R * 0.25, sy + R * 0.25, fill="#111111", width=0)
+        self.draw_stadium_front()
 
         # guía de arrastre
         if self.drag:
@@ -2877,7 +2909,7 @@ class MatchGame(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar,
             self.line_w(p.x, p.y, ex, ey, fill=col, width=max(2, 5 * self.s), arrow="last",
                         arrowshape=(16 * self.s + 6, 20 * self.s + 7, 7 * self.s + 3))
             px, py = self.to_s(p.x, p.y)
-            maximum = 150 if self.state == 'match' and self.fire.selected(p) else 100
+            maximum = self.player_fire_factor(p)*100 if self.state == 'match' and self.fire.selected(p) else 100*self.player_power_factor(p)
             cv.create_text(px, py - (p.r + 22) * self.s - 6, text=f"{int(pw * maximum)}%", fill=col,
                            font=self.F(0.9))
 
@@ -3001,15 +3033,15 @@ class MatchGame(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar,
         cv.create_rectangle(0, 0, cw, hud, fill="#062612", width=0)
         a, b = self.teams
         row1 = hud * 0.36
-        R = u * 0.85
+        R = u * 0.95
         if self.state == "match":
             sa, sb = self.score
         else:
             sa, sb = sum(self.pens[0]), sum(self.pens[1])
-        cv.create_text(cw / 2, row1, text=f"{sa} - {sb}", fill="#ffffff", font=self.F(1.6))
-        off = u * 3.2
-        cv.create_text(cw / 2 - off, row1, text=ABBR[a], fill="#ffffff", font=self.F(1.2), anchor="e")
-        cv.create_text(cw / 2 + off, row1, text=ABBR[b], fill="#ffffff", font=self.F(1.2), anchor="w")
+        cv.create_text(cw / 2, row1, text=f"{sa} - {sb}", fill="#ffffff", font=self.F(1.8))
+        off = u * 3.4
+        cv.create_text(cw / 2 - off, row1, text=ABBR[a], fill="#ffffff", font=self.F(1.35), anchor="e")
+        cv.create_text(cw / 2 + off, row1, text=ABBR[b], fill="#ffffff", font=self.F(1.35), anchor="w")
         self.jersey(cw / 2 - off - u * 3.6, row1, R, a)
         self.jersey(cw / 2 + off + u * 3.6, row1, R, b)
         row2 = hud * 0.75
@@ -3023,7 +3055,7 @@ class MatchGame(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar,
             elif now < self.next_shot_at[0]:
                 left = self.next_shot_at[0] - now
                 who = f"Tu recarga {left:.1f}s"
-                frac, col = 1 - left / COOLDOWN, "#ff9f3c"
+                frac, col = 1 - left / self.player_shot_interval(), "#ff9f3c"
             else:
                 who, frac, col = "¡TIRA!", 1.0, "#3cff6e"
             info = f"{self.period}  ·  {self.clock_text()}  ·  {who}"
@@ -3045,11 +3077,11 @@ class MatchGame(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar,
                                bx + rr * (2.6 if len(cd) > 1 else 1), row1 + rr,
                                fill="#ffd400", outline="#ffffff", width=2)
                 cv.create_text(bx, row1, text=cd, fill="#111111", font=self.F(1.2 if len(cd) == 1 else 0.7))
-        cv.create_text(cw / 2, row2, text=info, fill=col, font=self.F(0.85), width=cw * 0.98)
+        cv.create_text(cw / 2, row2, text=info, fill=col, font=self.F(1.0), width=cw * 0.98)
 
 
-class Game(FrontMenu, MatchGame):
-    """Original match implementation with a separate navigation layer."""
+class Game(ShopView, FrontMenu, MatchGame):
+    """Tienda y menú compuestos alrededor del motor de partido original."""
     pass
 
 

@@ -211,25 +211,8 @@ class FrontMenu:
         return (self.cw-x1,y0,self.cw-x0,y1)
 
     def draw_hud(self):
-        # Original scoreboard is drawn into its own bounded horizontal inset.
-        # This changes only its screen placement, never the match information.
-        if self.cw >= 320:
-            original_cw, original_u = self.cw, self.u
-            inset = max(56, self.cw*.16)
-            self.cw = original_cw-2*inset
-            self.u = min(original_u, self.cw/36)
-            from kivy.graphics import PushMatrix, PopMatrix, Translate
-            with self.cv.canvas:
-                PushMatrix()
-                Translate(inset,0)
-            try:
-                super().draw_hud()
-            finally:
-                with self.cv.canvas:
-                    PopMatrix()
-                self.cw, self.u = original_cw, original_u
-        else:
-            super().draw_hud()
+        # La flecha ocupa su propio espacio; el marcador conserva todo el ancho y su escala.
+        super().draw_hud()
 
     def back_rect(self):
         margin = max(10,min(self.cw,self.ch)*.025)
@@ -290,8 +273,13 @@ class FrontMenu:
             a=i*math.tau/5;px=x+math.cos(a)*r*.65;py=y+math.sin(a)*r*.65
             self.cv.create_oval(px-r*.15,py-r*.15,px+r*.15,py+r*.15,fill='#172a20',width=0)
         bh=min(66,max(46,h*.072));bw=min(w*.8,420)
+        shop_h=min(52,max(42,h*.055))
+        self.front_button(w/2,h*.66,bw,shop_h,'TIENDA',self.open_shop,'#e6c98e')
         self.front_button(w/2,h*.76,bw,bh,'TORNEO MUNDIAL',lambda:self.front_navigate('tournament'))
         self.front_button(w/2,h*.76+bh*1.3,bw,bh,'AMISTOSOS',lambda:self.front_navigate('friends'),'#ff7939')
+        if getattr(self,'shop',None):
+            self._coin(w-27,24,13)
+            self.cv.create_text(w-47,24,text=str(self.shop.balance),fill='#ffd45c',font=self.front_font(20,True),anchor='e')
 
     def draw_loading(self):
         w,h=self.cw,self.ch;t=max(0,time.monotonic()-self.nav.shown_at)
@@ -361,7 +349,10 @@ class FrontMenu:
         self.post_txt=f'{a} {self.score[0]}-{self.score[1]} {b}'+(f' ({pen_text})' if pen_text else '')
         # Commit before navigation/celebration. INSERT primary key provides idempotence.
         try:
-            self.store.record(self.friendly_id,a,b,winner==self.user,self.post_txt)
+            recorded=self.store.record(self.friendly_id,a,b,winner==self.user,self.post_txt)
+            if recorded and winner==self.user and getattr(self.store,'last_reward',None):
+                reward=self.store.last_reward
+                self.start_reward(reward['amount'],reward['balance'])
             self.front_error=''
         except Exception:
             # Never report an uncommitted result as saved; allow explicit retry.
@@ -376,7 +367,10 @@ class FrontMenu:
 
     def retry_friendly(self):
         try:
-            self.store.record(self.friendly_id,self.teams[0],self.teams[1],self.post_w==self.user,self.post_txt)
+            recorded=self.store.record(self.friendly_id,self.teams[0],self.teams[1],self.post_w==self.user,self.post_txt)
+            if recorded and self.post_w==self.user and getattr(self.store,'last_reward',None):
+                reward=self.store.last_reward
+                self.start_reward(reward['amount'],reward['balance'])
             self.front_error=''
             self.friendly_stats=self.store.stats()
         except Exception:
