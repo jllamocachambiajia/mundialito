@@ -32,6 +32,11 @@ penales, y botón de PAUSA (CONTINUAR / REINICIAR TORNEO) que congela todo, tamb
 import math
 import random
 import time
+import sys
+import os
+if sys.platform.startswith("win"):
+    os.environ.setdefault("KIVY_GL_BACKEND", "angle_sdl2")
+
 
 # ------------------------------------------------------------------ mundo (coordenadas lógicas)
 FX0, FY0, FX1, FY1 = 60, 80, 1040, 680          # campo
