@@ -1,4 +1,4 @@
-name: Mundialito - APK Android
+name: Mundialito - APK Android y Windows EXE
 
 on:
   workflow_dispatch:
@@ -9,11 +9,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: mundialito-apk-${{ github.ref }}
+  group: mundialito-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # =========================================================================
+  # TRABAJO 1: APK PARA ANDROID (Ubuntu 22.04) - Conservado intacto
+  # =========================================================================
   apk:
+    name: Compilar APK Android
     runs-on: ubuntu-22.04
     timeout-minutes: 180
     defaults:
@@ -84,7 +88,6 @@ jobs:
             "https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_COMMAND_TOOLS}_latest.zip" \
             -o "$RUNNER_TEMP/android-tools.zip"
           unzip -q "$RUNNER_TEMP/android-tools.zip" -d "$SDK"
-          # Buildozer busca tools/bin/sdkmanager; no usa el SDK preinstalado del runner.
           mv "$SDK/cmdline-tools" "$SDK/tools"
           for i in {1..200}; do printf 'y\n'; done > "$RUNNER_TEMP/android-license-answers.txt"
           "$SDK/tools/bin/sdkmanager" --sdk_root="$SDK" --licenses \
@@ -119,11 +122,10 @@ jobs:
           app['android.accept_sdk_license'] = 'True'
           app['p4a.branch'] = 'v2024.01.21'
           extensions = [part.strip() for part in app.get('source.include_exts', '').split(',') if part.strip()]
-          for extension in ('png', 'gif', 'json', 'mp3', 'wav', 'py'):
+          for extension in ('png', 'gif', 'json', 'mp3', 'wav', 'ogg', 'py', 'ttf'):
               if extension not in extensions:
                   extensions.append(extension)
           app['source.include_exts'] = ','.join(extensions)
-          # Identidad, requisitos Kivy/Pillow, orientacion y arquitecturas no cambian.
           with open('buildozer.spec', 'w', encoding='utf-8') as stream:
               config.write(stream)
           PY
@@ -153,42 +155,134 @@ jobs:
             buildozer.spec
           if-no-files-found: warn
           retention-days: 7
+
+  # =========================================================================
+  # TRABAJO 2: EJECUTABLE .EXE PARA WINDOWS (Corregido y optimizado)
+  # =========================================================================
   windows:
+    name: Compilar EXE Windows
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+
     steps:
       - name: Descargar proyecto
         uses: actions/checkout@v4
 
-      - name: Preparar Python
+      - name: Configurar Python 3.11 con binarios oficiales
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
-      - name: Instalar Kivy y PyInstaller
-        shell: pwsh
+      - name: Instalar dependencias precompiladas de Windows (sin compilar C++)
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install "kivy==2.3.0" "pyinstaller==6.10.0"
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install "kivy[base]" kivy_deps.sdl2 kivy_deps.glew pillow pyinstaller
 
-      - name: Validar archivos del juego
-        shell: pwsh
+      - name: Validar sintaxis de archivos Python
         run: |
-          python -m py_compile main.py tournament.py presentation.py
+          python - << 'PY'
+          import glob
+          import py_compile
+          for file in glob.glob("*.py"):
+              py_compile.compile(file, doraise=True)
+          print("Archivos Python validados correctamente.")
+          PY
 
-      - name: Compilar EXE para Windows
-        shell: pwsh
+      - name: Generar especificacion PyInstaller con soporte completo de Kivy
         run: |
-          python -m PyInstaller --noconfirm --onefile --windowed --name Mundialito --add-data "assets;assets" --add-data "musica_fondo.mp3;." main.py
+          python - << 'PY'
+          import os
 
-      - name: Publicar EXE descargable
+          spec_code = """# -*- mode: python ; coding: utf-8 -*-
+          import os
+          from PyInstaller.building.build_main import Analysis, PYZ, EXE, COLLECT
+          from PyInstaller.building.datastruct import Tree
+          from kivy.tools.packaging.pyinstaller_hooks import get_deps_minimal, hookspath, runtime_hooks
+          from kivy_deps import sdl2, glew
+
+          datas = []
+          if os.path.exists('assets'):
+              datas.append(('assets', 'assets'))
+
+          # Incluir audios o configuraciones sueltas en la raiz si existen
+          for f in os.listdir('.'):
+              if f.endswith(('.mp3', '.ogg', '.wav', '.json')) and os.path.isfile(f):
+                  datas.append((f, '.'))
+
+          a = Analysis(
+              ['main.py'],
+              pathex=['.'],
+              binaries=[],
+              datas=datas,
+              hiddenimports=[
+                  'sqlite3',
+                  'json',
+                  'math',
+                  'random',
+                  'PIL',
+                  'kivy',
+                  'kivy.core.audio.audio_sdl2',
+                  'kivy.core.window.window_sdl2',
+                  'kivy.core.image.img_sdl2',
+                  'kivy.core.text.text_sdl2',
+              ],
+              hookspath=hookspath(),
+              runtime_hooks=runtime_hooks(),
+              excludes=['tkinter'],
+              win_no_prefer_redirects=False,
+              win_private_assemblies=False,
+              cipher=None,
+              noarchive=False,
+              **get_deps_minimal(video=False, camera=False)
+          )
+
+          pyz = PYZ(a.pure, a.zipped_data, cipher=None)
+
+          exe = EXE(
+              pyz,
+              a.scripts,
+              [],
+              exclude_binaries=True,
+              name='Mundialito',
+              debug=False,
+              bootloader_ignore_signals=False,
+              strip=False,
+              upx=False,
+              console=False
+          )
+
+          coll = COLLECT(
+              exe,
+              a.binaries,
+              a.zipfiles,
+              a.datas,
+              *[Tree(p) for p in (sdl2.dep_bins + glew.dep_bins)],
+              strip=False,
+              upx=False,
+              name='Mundialito',
+          )
+          """
+          with open('Mundialito.spec', 'w', encoding='utf-8') as f:
+              f.write(spec_code)
+          print("Mundialito.spec generado exitosamente.")
+          PY
+
+      - name: Compilar ejecutable (modo automatico sin confirmaciones)
+        run: |
+          python -m PyInstaller Mundialito.spec --noconfirm
+
+      - name: Empaquetar juego completo en archivo ZIP
+        run: |
+          python -c "import shutil; shutil.make_archive('dist/Mundialito-Windows', 'zip', 'dist', 'Mundialito')"
+
+      - name: Publicar ejecutable Windows descargable
         uses: actions/upload-artifact@v4
         with:
           name: Mundialito-Windows-EXE
-          path: dist/Mundialito.exe
+          path: dist/Mundialito-Windows.zip
           if-no-files-found: error
           retention-days: 14
-          
-          
-
-          
