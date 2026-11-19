@@ -155,9 +155,8 @@ jobs:
             buildozer.spec
           if-no-files-found: warn
           retention-days: 7
-
   # =========================================================================
-  # TRABAJO 2: EJECUTABLE .EXE PARA WINDOWS (Corregido y optimizado)
+  # TRABAJO 2: EJECUTABLE .EXE PARA WINDOWS (Con soporte ANGLE / DirectX)
   # =========================================================================
   windows:
     name: Compilar EXE Windows
@@ -166,6 +165,9 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      # Fuerza a Kivy a usar DirectX mediante ANGLE, evitando el error de OpenGL 1.1
+      KIVY_GL_BACKEND: "angle_sdl2"
 
     steps:
       - name: Descargar proyecto
@@ -177,10 +179,10 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Instalar dependencias precompiladas de Windows (sin compilar C++)
+      - name: Instalar dependencias precompiladas de Windows (incluyendo ANGLE)
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          python -m pip install "kivy[base]" kivy_deps.sdl2 kivy_deps.glew pillow pyinstaller
+          python -m pip install "kivy[base]" kivy_deps.sdl2 kivy_deps.glew kivy_deps.angle pillow pyinstaller
 
       - name: Validar sintaxis de archivos Python
         run: |
@@ -192,7 +194,7 @@ jobs:
           print("Archivos Python validados correctamente.")
           PY
 
-      - name: Generar especificacion PyInstaller con soporte completo de Kivy
+      - name: Generar especificacion PyInstaller con soporte completo de Kivy y ANGLE
         run: |
           python - << 'PY'
           import os
@@ -202,13 +204,12 @@ jobs:
           from PyInstaller.building.build_main import Analysis, PYZ, EXE, COLLECT
           from PyInstaller.building.datastruct import Tree
           from kivy.tools.packaging.pyinstaller_hooks import get_deps_minimal, hookspath, runtime_hooks
-          from kivy_deps import sdl2, glew
+          from kivy_deps import sdl2, glew, angle
 
           datas = []
           if os.path.exists('assets'):
               datas.append(('assets', 'assets'))
 
-          # Incluir audios o configuraciones sueltas en la raiz si existen
           for f in os.listdir('.'):
               if f.endswith(('.mp3', '.ogg', '.wav', '.json')) and os.path.isfile(f):
                   datas.append((f, '.'))
@@ -260,7 +261,7 @@ jobs:
               a.binaries,
               a.zipfiles,
               a.datas,
-              *[Tree(p) for p in (sdl2.dep_bins + glew.dep_bins)],
+              *[Tree(p) for p in (sdl2.dep_bins + glew.dep_bins + angle.dep_bins)],
               strip=False,
               upx=False,
               name='Mundialito',
@@ -268,7 +269,7 @@ jobs:
           """
           with open('Mundialito.spec', 'w', encoding='utf-8') as f:
               f.write(spec_code)
-          print("Mundialito.spec generado exitosamente.")
+          print("Mundialito.spec generado exitosamente con soporte ANGLE.")
           PY
 
       - name: Compilar ejecutable (modo automatico sin confirmaciones)
