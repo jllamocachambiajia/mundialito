@@ -455,7 +455,9 @@ class _CanvasWidget(_Widget):
     def _fire(self, name, touch):
         h = self.handlers.get(name)
         if h:
-            h(_Ev(touch.x - self.x, self.height - (touch.y - self.y)))
+            ev = _Ev(touch.x - self.x, self.height - (touch.y - self.y))
+            ev.touch_id = getattr(touch, "id", None)
+            h(ev)
 
     def on_touch_down(self, touch):
         if getattr(touch, "button", "left") in ("scrollup", "scrolldown", "right"):
@@ -1250,9 +1252,22 @@ from ai import RivalAI, ENHANCED_COOLDOWN
 
 from front_menu import FrontMenu
 from shop_view import ShopView
+from multiplayer import MultiplayerMixin
 
 
 class MatchGame(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar, TournamentView):
+    def is_human_team(self, team):
+        return team == 0
+
+    def is_cpu_team(self, team):
+        return team == 1
+
+    def is_two_player_mode(self):
+        return False
+
+    def is_online_mode(self):
+        return False
+
     def __init__(self, root):
         self.root = root
         root.title("Copa Mundial de Chapas")
@@ -2057,6 +2072,8 @@ class MatchGame(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar,
     def gk_target(self, k):
         """v10: a dónde va el arquero CPU: intercepta tiros, sale a despejar balones sueltos
         en su área grande o vuelve a su posición base, adelantándose según el balón."""
+        if not self.is_cpu_team(k.team):
+            return k.x, k.y, False
         b = self.ball
         right = k.team == 1
         line = FX1 if right else FX0
@@ -2744,15 +2761,20 @@ class MatchGame(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar,
         # zona táctil ampliada (no cambia el dibujo ni la física): ~2,3 veces el radio o 44 px
         reach = max(PR * 2.3, 44 / self.s)
         if self.state == "match":
-            if self.phase != "play" or self.kick_team == 1:
+            if self.phase != "play" or (self.kick_team is not None and not self.is_human_team(self.kick_team)):
                 return
             best, bd = None, reach
             for p in self.bodies:
-                if p.team == 0 and not self.magnetic_stunned(p) and not (p.keeper and self.kick_team is not None):
+                if self.is_human_team(p.team) and not self.magnetic_stunned(p) and not (p.keeper and self.kick_team is not None):
                     d = math.hypot(p.x - wx, p.y - wy)
                     if d <= bd:
                         best, bd = p, d
             self.drag = best
+            touch_id = getattr(ev, "touch_id", None)
+            if touch_id is not None and best is not None:
+                if not hasattr(self, "drags"):
+                    self.drags = {}
+                self.drags[touch_id] = best
             if best is not None and not best.keeper:
                 self.fire.select(best, vnow())
             if best is not None and best.keeper:        # v8: agarrar al arquero = cámara lenta 50 %
@@ -2793,10 +2815,15 @@ class MatchGame(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar,
         if self.gk_hold:                                # v7: soltar la flecha = DASH
             self.gk_release()
             return
-        if not self.drag:
-            return
-        p = self.drag
+        touch_id = getattr(ev, "touch_id", None)
+        p = None
+        if touch_id is not None and hasattr(self, "drags"):
+            p = self.drags.pop(touch_id, None)
+        if p is None:
+            p = self.drag
         self.drag = None
+        if not p:
+            return
         wx, wy = self.to_w(ev.x, ev.y)
         if math.hypot(wx - p.x, wy - p.y) < 6:
             if self.state == "match" and p.keeper:
@@ -2807,12 +2834,17 @@ class MatchGame(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar,
         ux, uy, pw = self.drag_vec(p, wx, wy)
         dx, dy = ux * pw * MAX_DRAG, uy * pw * MAX_DRAG
         if self.state == "match":
-            if self.phase != "play" or self.kick_team == 1:
+            if self.phase != "play" or (self.kick_team is not None and not self.is_human_team(self.kick_team)):
                 return
             if self.fire.selected(p):
                 dx *= POWER_FACTOR; dy *= POWER_FACTOR
-            if self.can_shoot(0, None, p.keeper):
-                self.shoot(p, dx * POWER, dy * POWER)
+            team = p.team
+            if self.can_shoot(team, None, p.keeper):
+                vx, vy = dx * POWER, dy * POWER
+                self.shoot(p, vx, vy)
+                if getattr(self, 'is_online_mode', lambda: False)() and getattr(self, 'net_client', None):
+                    body_idx = self.bodies.index(p) if p in self.bodies else 0
+                    self.net_client.send_shoot(body_idx, vx, vy, p.keeper)
             else:                                       # en recarga: se dispara al terminar
                 self.pending = (p, dx * POWER, dy * POWER)
         elif self.state == "pens" and self.pen_ready():
@@ -2823,6 +2855,10 @@ class MatchGame(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar,
     # ---------------- bucle
     def tick(self):
         self.front_tick()
+        if hasattr(self, "multiplayer_tick"):
+            self.multiplayer_tick()
+            if self.is_two_player_mode() or self.is_online_mode():
+                self.ai_at = vnow() + 99999.0
         stamp=time.perf_counter()
         now=vnow();elapsed=max(0,now-self.last_t);dt=min(.1,elapsed);self.last_t=now
         active=not self.paused and not self.visual.transitioning and not self.nav.busy and self.front_paused_at is None
@@ -2843,7 +2879,7 @@ class MatchGame(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar,
 
     # ---------------- dibujo de partido
     def selection_ring_visible(self, b):
-        return (self.state == "match" and self.can_shoot(0) and b.team == 0
+        return (self.state == "match" and self.can_shoot(b.team) and self.is_human_team(b.team)
                 and not self.fire.selected(b))
 
     def draw_selection_ring(self, b, sx, sy, R, pulse):
@@ -3088,8 +3124,8 @@ class MatchGame(RivalAI, FireAbility, PausaAbility, MagneticAbility, AbilityBar,
         cv.create_text(cw / 2, row2, text=info, fill=col, font=self.F(1.0), width=cw * 0.98)
 
 
-class Game(ShopView, FrontMenu, MatchGame):
-    """Tienda y menú compuestos alrededor del motor de partido original."""
+class Game(ShopView, FrontMenu, MultiplayerMixin, MatchGame):
+    """Tienda, menú y multijugador compuestos alrededor del motor de partido original."""
     pass
 
 

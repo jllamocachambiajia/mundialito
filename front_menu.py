@@ -29,6 +29,8 @@ class FrontMenu:
         self.front_error = ''
         self.cv.opacity = 1
         self.state = 'home'
+        if hasattr(self, 'multiplayer_init'):
+            self.multiplayer_init()
         self.menu_audio.start()
         Window.bind(on_keyboard=self.front_keyboard)
         # Widget starts at its default 100x100 before attachment to Window.
@@ -64,13 +66,19 @@ class FrontMenu:
             self.draw_friends()
         elif self.state == 'friendly_post':
             self.draw_friendly_post()
+        elif self.state.startswith('online_lobby'):
+            if hasattr(self, 'draw_online_lobby'):
+                self.draw_online_lobby()
+        elif self.state == 'local_2p_select':
+            if hasattr(self, 'draw_local_2p_select'):
+                self.draw_local_2p_select()
         else:
             super().render()
             if self.state not in ('match','pens'):
                 self.draw_back()
 
     def draw(self):
-        if self.state in ('home','friends','loading','friendly_post'):
+        if self.state in ('home','friends','loading','friendly_post','local_2p_select') or self.state.startswith('online_lobby'):
             self.render()
             return
         super().draw()
@@ -181,7 +189,7 @@ class FrontMenu:
             if x0 <= ev.x <= x1 and y0 <= ev.y <= y1:
                 self.front_navigate('home')
                 return
-        if self.state in ('home','friends','friendly_post'):
+        if self.state in ('home','friends','friendly_post','local_2p_select') or self.state.startswith('online_lobby'):
             for x0,y0,x1,y1,cmd in list(self.buttons):
                 if x0 <= ev.x <= x1 and y0 <= ev.y <= y1:
                     self.front_press = (x0,y0,x1,y1,time.monotonic())
@@ -195,7 +203,7 @@ class FrontMenu:
         if not self.nav.busy: super().on_motion(ev)
 
     def on_release(self, ev):
-        if not self.nav.busy and self.state not in ('home','friends','loading','friendly_post'):
+        if not self.nav.busy and self.state not in ('home','friends','loading','friendly_post','local_2p_select') and not self.state.startswith('online_lobby'):
             super().on_release(ev)
 
     def front_keyboard(self, window, key, *_):
@@ -266,8 +274,8 @@ class FrontMenu:
             with self.cv.canvas:
                 Color(1,1,1,1)
                 Rectangle(texture=image,pos=((w-iw)/2,h-ih),size=(iw,ih))
-        title_size=min(w*.17,h*.073)
-        center=h*.485
+        title_size=min(w*.17,h*.070)
+        center=h*.39
         self.cv.create_text(w*.46,center,text='MUNDIAL',fill='#b5f65a',font=self.front_font(title_size,True))
         self.cv.create_text(w*.53,center+title_size*.79,text='DE CHAPAS',fill='#ff761b',font=self.front_font(title_size*.92,True))
         # Small vector football tucked into the title's right edge.
@@ -277,11 +285,15 @@ class FrontMenu:
         for i in range(5):
             a=i*math.tau/5;px=x+math.cos(a)*r*.65;py=y+math.sin(a)*r*.65
             self.cv.create_oval(px-r*.15,py-r*.15,px+r*.15,py+r*.15,fill='#172a20',width=0)
-        bh=min(66,max(46,h*.072));bw=min(w*.8,420)
-        shop_h=min(52,max(42,h*.055))
-        self.front_button(w/2,h*.66,bw,shop_h,'TIENDA',self.open_shop,'#e6c98e')
-        self.front_button(w/2,h*.76,bw,bh,'TORNEO MUNDIAL',lambda:self.front_navigate('tournament'))
-        self.front_button(w/2,h*.76+bh*1.3,bw,bh,'AMISTOSOS',lambda:self.front_navigate('friends'),'#ff7939')
+        bh=min(50,max(36,h*.056));bw=min(w*.82,390)
+        base_y=h*.49
+        gap=bh*1.18
+
+        self.front_button(w/2,base_y,bw,bh,'TORNEO MUNDIAL',lambda:self.front_navigate('tournament'),'#ffd400')
+        self.front_button(w/2,base_y+gap,bw,bh,'AMISTOSO (VS CPU)',lambda:self.front_navigate('friends'),'#ff7939')
+        self.front_button(w/2,base_y+gap*2,bw,bh,'2 JUGADORES (LOCAL)',getattr(self,'setup_2p_local',lambda:None),'#35c759')
+        self.front_button(w/2,base_y+gap*3,bw,bh,'MULTIJUGADOR EN LÍNEA',getattr(self,'start_online_lobby',lambda:None),'#00c7be')
+        self.front_button(w/2,base_y+gap*4,bw,bh*.9,'TIENDA',self.open_shop,'#e6c98e')
         if getattr(self,'shop',None):
             self._coin(w-27,24,13)
             self.cv.create_text(w-47,24,text=str(self.shop.balance),fill='#ffd45c',font=self.front_font(20,True),anchor='e')
