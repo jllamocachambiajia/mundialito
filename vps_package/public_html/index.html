@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mundialito — Servidor Multijugador Oficial</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <header class="header">
+        <div class="container header-container">
+            <div class="logo">
+                <span class="ball-icon">⚽</span>
+                <h1>MUNDIALITO <span>v11</span></h1>
+            </div>
+            <div class="status-badge" id="server-status">
+                <span class="status-dot green"></span> Servidor En Línea
+            </div>
+        </div>
+    </header>
+
+    <main class="main container">
+        <section class="hero">
+            <h2 class="hero-title">¡MODALIDAD MULTIFUNCIONAL ACTIVADA!</h2>
+            <p class="hero-subtitle">
+                Juega con 2 equipos al mismo tiempo en tiempo real. Conexión de baja latencia sincronizada a través de <strong>llamoca.enlace.ink</strong>.
+            </p>
+            <div class="hero-actions">
+                <a href="#modalidades" class="btn btn-primary">Ver Modalidades</a>
+                <button onclick="testWebSocket()" class="btn btn-secondary" id="btn-test">⚡ Probar Conexión WebSocket</button>
+            </div>
+            <div id="ping-result" class="ping-result"></div>
+        </section>
+
+        <section class="live-stats">
+            <div class="stat-card">
+                <span class="stat-num" id="stat-rooms">0</span>
+                <span class="stat-label">Salas Activas</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-num" id="stat-uptime">0 min</span>
+                <span class="stat-label">Tiempo en Línea</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-num" id="stat-protocol">WSS / JSON</span>
+                <span class="stat-label">Protocolo de Red</span>
+            </div>
+        </section>
+
+        <section class="modes" id="modalidades">
+            <h3 class="section-title">Modalidades para 2 Equipos Simultáneos</h3>
+            <div class="modes-grid">
+                <div class="mode-card">
+                    <div class="mode-header">
+                        <span class="mode-badge local">LOCAL</span>
+                        <h4>2 Jugadores en Misma Pantalla</h4>
+                    </div>
+                    <p>
+                        Diseñado para tablets, pantallas táctiles o computadoras. Ambos jugadores controlan sus fichas <strong>al mismo tiempo</strong> con soporte multitouch nativo.
+                    </p>
+                    <ul class="mode-steps">
+                        <li>1. En el menú principal pulsa <strong>2 JUGADORES (LOCAL)</strong>.</li>
+                        <li>2. Selecciona la camiseta de cada jugador con las flechas.</li>
+                        <li>3. Pulsa <strong>¡INICIAR PARTIDO!</strong> y arrastren sus fichas a la vez.</li>
+                    </ul>
+                </div>
+
+                <div class="mode-card">
+                    <div class="mode-header">
+                        <span class="mode-badge online">EN LÍNEA</span>
+                        <h4>Multijugador en Red (2 Dispositivos)</h4>
+                    </div>
+                    <p>
+                        Juega con un amigo desde dos teléfonos o computadoras distintas en tiempo real a través del VPS <strong>llamoca.enlace.ink</strong>.
+                    </p>
+                    <ul class="mode-steps">
+                        <li>1. Pulsa <strong>MULTIJUGADOR EN LÍNEA</strong> en ambos dispositivos.</li>
+                        <li>2. El Jugador 1 selecciona <strong>CREAR SALA</strong> y recibe un código de 4 dígitos.</li>
+                        <li>3. El Jugador 2 pulsa <strong>UNIRSE CON CÓDIGO</strong> e ingresa el PIN.</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <section class="download-section">
+            <div class="download-banner">
+                <div class="download-info">
+                    <h3>Descarga la Aplicación para Android</h3>
+                    <p>Instala el APK oficial en tu celular o tablet para jugar en cualquier lugar.</p>
+                </div>
+                <div class="download-buttons">
+                    <a href="https://github.com/jllamocachambiajia/mundialito" target="_blank" class="btn btn-github">
+                        📦 Repositorio GitHub
+                    </a>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <div class="container footer-content">
+            <p>Mundialito &copy; 2026 — Desplegado en el VPS de Contabo bajo la infraestructura <strong>enlace.ink</strong>.</p>
+            <p class="server-host">Host: <code>llamoca.enlace.ink:443</code> (SSL / WSS Activo)</p>
+        </div>
+    </footer>
+
+    <script>
+        async function updateStats() {
+            try {
+                const res = await fetch('/api/status');
+                if (res.ok) {
+                    const data = await res.json();
+                    document.getElementById('stat-rooms').textContent = data.active_rooms;
+                    const mins = Math.floor(data.uptime_seconds / 60);
+                    document.getElementById('stat-uptime').textContent = mins + ' min';
+                }
+            } catch (e) {
+                console.error("Error al obtener estadísticas:", e);
+            }
+        }
+
+        function testWebSocket() {
+            const btn = document.getElementById('btn-test');
+            const res = document.getElementById('ping-result');
+            btn.disabled = true;
+            btn.textContent = 'Probando...';
+            res.textContent = 'Conectando a wss://' + window.location.host + '...';
+
+            const start = performance.now();
+            const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const ws = new WebSocket(proto + '//' + window.location.host);
+
+            ws.onopen = function() {
+                ws.send(JSON.stringify({ action: 'ping' }));
+            };
+
+            ws.onmessage = function(event) {
+                const elapsed = Math.round(performance.now() - start);
+                res.innerHTML = '🟢 Conexión exitosa con el VPS. Latencia WebSocket: <strong>' + elapsed + ' ms</strong>';
+                btn.disabled = false;
+                btn.textContent = '⚡ Probar Nuevamente';
+                ws.close();
+            };
+
+            ws.onerror = function() {
+                res.innerHTML = '🔴 No se pudo conectar al WebSocket. Revisa si el servidor está activo.';
+                btn.disabled = false;
+                btn.textContent = '⚡ Reintentar';
+            };
+        }
+
+        updateStats();
+        setInterval(updateStats, 5000);
+    </script>
+</body>
+</html>
