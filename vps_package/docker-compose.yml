@@ -3,6 +3,8 @@ services:
     build: .
     container_name: llamoca-app
     restart: unless-stopped
+    volumes:
+      - ./public_html:/app/public_html
     networks:
       - web-network
 

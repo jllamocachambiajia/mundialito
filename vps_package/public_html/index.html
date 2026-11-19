@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mundialito — Servidor Multijugador Oficial</title>
+    <title>Mundialito — Jugar en la Web (Local y En Línea)</title>
     <link rel="stylesheet" href="style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -14,82 +14,70 @@
         <div class="container header-container">
             <div class="logo">
                 <span class="ball-icon">⚽</span>
-                <h1>MUNDIALITO <span>v11</span></h1>
+                <h1>MUNDIALITO <span>WEB</span></h1>
             </div>
             <div class="status-badge" id="server-status">
-                <span class="status-dot green"></span> Servidor En Línea
+                <span class="status-dot green"></span> <span id="status-label">Servidor WSS Activo</span>
             </div>
         </div>
     </header>
 
     <main class="main container">
-        <section class="hero">
-            <h2 class="hero-title">¡MODALIDAD MULTIFUNCIONAL ACTIVADA!</h2>
-            <p class="hero-subtitle">
-                Juega con 2 equipos al mismo tiempo en tiempo real. Conexión de baja latencia sincronizada a través de <strong>llamoca.enlace.ink</strong>.
-            </p>
-            <div class="hero-actions">
-                <a href="#modalidades" class="btn btn-primary">Ver Modalidades</a>
-                <button onclick="testWebSocket()" class="btn btn-secondary" id="btn-test">⚡ Probar Conexión WebSocket</button>
+        <!-- ZONA DEL JUEGO WEB -->
+        <section class="game-section">
+            <div class="game-header">
+                <h2 class="game-title">Copa Mundial de Chapas — Edición Web</h2>
+                <div class="game-controls-bar">
+                    <button class="btn btn-primary" onclick="playLocal()">👥 Jugar Local (2 Jugadores)</button>
+                    <button class="btn btn-online" onclick="playOnline()" id="btn-online">🌐 Jugar en Línea (Buscar Jugadores)</button>
+                    <button class="btn btn-secondary" onclick="playCpu()">🤖 1 Jugador vs CPU</button>
+                </div>
+                <div id="matchmaking-status" class="matchmaking-status">
+                    Selecciona una modalidad arriba para comenzar a jugar
+                </div>
             </div>
-            <div id="ping-result" class="ping-result"></div>
-        </section>
 
-        <section class="live-stats">
-            <div class="stat-card">
-                <span class="stat-num" id="stat-rooms">0</span>
-                <span class="stat-label">Salas Activas</span>
+            <!-- CONTENEDOR DEL CANVAS DEL JUEGO -->
+            <div class="canvas-wrapper">
+                <canvas id="game-canvas"></canvas>
             </div>
-            <div class="stat-card">
-                <span class="stat-num" id="stat-uptime">0 min</span>
-                <span class="stat-label">Tiempo en Línea</span>
-            </div>
-            <div class="stat-card">
-                <span class="stat-num" id="stat-protocol">WSS / JSON</span>
-                <span class="stat-label">Protocolo de Red</span>
+            <div class="game-instructions">
+                💡 <strong>Instrucciones:</strong> Toca o haz clic sobre una ficha de tu equipo, arrastra hacia atrás para ajustar la potencia y suelta para tirar. ¡En el modo <strong>2 Jugadores Local</strong> pueden arrastrar al mismo tiempo!
             </div>
         </section>
 
+        <!-- INFORMACIÓN DE MODALIDADES Y WEBSOCKET -->
         <section class="modes" id="modalidades">
-            <h3 class="section-title">Modalidades para 2 Equipos Simultáneos</h3>
+            <h3 class="section-title">Modalidades Disponibles</h3>
             <div class="modes-grid">
                 <div class="mode-card">
                     <div class="mode-header">
                         <span class="mode-badge local">LOCAL</span>
-                        <h4>2 Jugadores en Misma Pantalla</h4>
+                        <h4>2 Jugadores (Misma Pantalla)</h4>
                     </div>
                     <p>
-                        Diseñado para tablets, pantallas táctiles o computadoras. Ambos jugadores controlan sus fichas <strong>al mismo tiempo</strong> con soporte multitouch nativo.
+                        Diseñado para computadoras, tablets y celulares táctiles. Cada persona controla su equipo en tiempo real sin turnos.
                     </p>
-                    <ul class="mode-steps">
-                        <li>1. En el menú principal pulsa <strong>2 JUGADORES (LOCAL)</strong>.</li>
-                        <li>2. Selecciona la camiseta de cada jugador con las flechas.</li>
-                        <li>3. Pulsa <strong>¡INICIAR PARTIDO!</strong> y arrastren sus fichas a la vez.</li>
-                    </ul>
                 </div>
 
                 <div class="mode-card">
                     <div class="mode-header">
                         <span class="mode-badge online">EN LÍNEA</span>
-                        <h4>Multijugador en Red (2 Dispositivos)</h4>
+                        <h4>Multijugador Vía WebSocket</h4>
                     </div>
                     <p>
-                        Juega con un amigo desde dos teléfonos o computadoras distintas en tiempo real a través del VPS <strong>llamoca.enlace.ink</strong>.
+                        Conéctate al instante con otro jugador en internet a través del túnel seguro <code>wss://llamoca.enlace.ink</code> con sincronización de tiros inmediata.
                     </p>
-                    <ul class="mode-steps">
-                        <li>1. Pulsa <strong>MULTIJUGADOR EN LÍNEA</strong> en ambos dispositivos.</li>
-                        <li>2. El Jugador 1 selecciona <strong>CREAR SALA</strong> y recibe un código de 4 dígitos.</li>
-                        <li>3. El Jugador 2 pulsa <strong>UNIRSE CON CÓDIGO</strong> e ingresa el PIN.</li>
-                    </ul>
                 </div>
             </div>
         </section>
 
+        <!-- SECCIÓN DE DESCARGA DE APK -->
         <section class="download-section">
             <div class="download-banner">
                 <div class="download-info">
-                    <h3>Descarga la Aplicación para Android</h3>
-                    <p>Instala el APK oficial en tu celular o tablet para jugar en cualquier lugar.</p>
+                    <h3>¿Prefieres jugar en tu celular Android?</h3>
+                    <p>También puedes descargar e instalar la versión nativa APK o consultar el código fuente en GitHub.</p>
                 </div>
                 <div class="download-buttons">
                     <a href="https://github.com/jllamocachambiajia/mundialito" target="_blank" class="btn btn-github">
@@ -102,58 +90,46 @@
 
     <footer class="footer">
         <div class="container footer-content">
-            <p>Mundialito &copy; 2026 — Desplegado en el VPS de Contabo bajo la infraestructura <strong>enlace.ink</strong>.</p>
+            <p>Mundialito Web &copy; 2026 — Desplegado en el VPS de Contabo bajo la infraestructura <strong>enlace.ink</strong>.</p>
             <p class="server-host">Host: <code>llamoca.enlace.ink:443</code> (SSL / WSS Activo)</p>
         </div>
     </footer>
 
+    <script src="game.js"></script>
     <script>
-        async function updateStats() {
-            try {
-                const res = await fetch('/api/status');
-                if (res.ok) {
-                    const data = await res.json();
-                    document.getElementById('stat-rooms').textContent = data.active_rooms;
-                    const mins = Math.floor(data.uptime_seconds / 60);
-                    document.getElementById('stat-uptime').textContent = mins + ' min';
-                }
-            } catch (e) {
-                console.error("Error al obtener estadísticas:", e);
+        function playLocal() {
+            if (window.mundialitoGame) {
+                window.mundialitoGame.startLocalMatch("Argentina", "Brasil");
+                document.getElementById('matchmaking-status').innerHTML = "🟢 <strong>Modo Local Activo:</strong> ¡Ambos jugadores pueden disparar sus chapitas en la misma pantalla!";
             }
         }
 
-        function testWebSocket() {
-            const btn = document.getElementById('btn-test');
-            const res = document.getElementById('ping-result');
-            btn.disabled = true;
-            btn.textContent = 'Probando...';
-            res.textContent = 'Conectando a wss://' + window.location.host + '...';
-
-            const start = performance.now();
-            const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const ws = new WebSocket(proto + '//' + window.location.host);
-
-            ws.onopen = function() {
-                ws.send(JSON.stringify({ action: 'ping' }));
-            };
-
-            ws.onmessage = function(event) {
-                const elapsed = Math.round(performance.now() - start);
-                res.innerHTML = '🟢 Conexión exitosa con el VPS. Latencia WebSocket: <strong>' + elapsed + ' ms</strong>';
-                btn.disabled = false;
-                btn.textContent = '⚡ Probar Nuevamente';
-                ws.close();
-            };
-
-            ws.onerror = function() {
-                res.innerHTML = '🔴 No se pudo conectar al WebSocket. Revisa si el servidor está activo.';
-                btn.disabled = false;
-                btn.textContent = '⚡ Reintentar';
-            };
+        function playCpu() {
+            if (window.mundialitoGame) {
+                window.mundialitoGame.startCpuMatch("Argentina", "Alemania");
+                document.getElementById('matchmaking-status').innerHTML = "🤖 <strong>Modo vs CPU Activo:</strong> Juega con Argentina contra la IA de Alemania.";
+            }
         }
 
-        updateStats();
-        setInterval(updateStats, 5000);
+        function playOnline() {
+            if (window.mundialitoGame) {
+                const btn = document.getElementById('btn-online');
+                btn.disabled = true;
+                btn.textContent = "🔍 Buscando...";
+                document.getElementById('matchmaking-status').innerHTML = "🔄 <strong>Conectando al WebSocket del VPS...</strong> Buscando rival en línea...";
+                window.mundialitoGame.searchOnlineMatch();
+
+                const checkInterval = setInterval(() => {
+                    const status = window.mundialitoGame.onlineStatus;
+                    document.getElementById('matchmaking-status').innerHTML = `🌐 <strong>Multijugador:</strong> ${status}`;
+                    if (window.mundialitoGame.mode === 'match' && window.mundialitoGame.matchType === 'online') {
+                        btn.disabled = false;
+                        btn.textContent = "🌐 Jugar en Línea";
+                        clearInterval(checkInterval);
+                    }
+                }, 800);
+            }
+        }
     </script>
 </body>
 </html>

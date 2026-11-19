@@ -305,3 +305,76 @@ body {
     border-radius: 4px;
     color: var(--primary);
 }
+
+/* Estilos para la zona del juego en la web */
+.game-section {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    margin: 30px 0;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+
+.game-header {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.game-title {
+    font-family: 'Oswald', sans-serif;
+    color: var(--gold);
+    font-size: 2.2rem;
+    margin-bottom: 16px;
+}
+
+.game-controls-bar {
+    display: flex;
+    justify-content: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+}
+
+.btn-online {
+    background: linear-gradient(135deg, #007aff, #00c7be);
+    color: #ffffff;
+    border: none;
+    font-weight: 700;
+}
+
+.btn-online:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 18px rgba(0, 199, 190, 0.4);
+}
+
+.matchmaking-status {
+    font-size: 0.95rem;
+    color: var(--primary);
+    min-height: 24px;
+    margin-top: 8px;
+}
+
+.canvas-wrapper {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    background-color: #051c12;
+    border: 2px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    position: relative;
+    touch-action: none;
+}
+
+#game-canvas {
+    display: block;
+    cursor: crosshair;
+}
+
+.game-instructions {
+    text-align: center;
+    margin-top: 14px;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
