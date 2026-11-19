@@ -14,7 +14,7 @@
         <div class="container header-container">
             <div class="logo">
                 <span class="ball-icon">⚽</span>
-                <h1>MUNDIALITO <span>WEB</span></h1>
+                <h1>MUNDIALITO <span>WEB ORIGINAL</span></h1>
             </div>
             <div class="status-badge" id="server-status">
                 <span class="status-dot green"></span> <span id="status-label">Servidor WSS Activo</span>
@@ -27,13 +27,36 @@
         <section class="game-section">
             <div class="game-header">
                 <h2 class="game-title">Copa Mundial de Chapas — Edición Web</h2>
+
+                <!-- SELECTOR DE LAS 24 SELECCIONES OFICIALES -->
+                <div class="team-selectors-bar">
+                    <div class="team-select-box">
+                        <label for="select-team1">Jugador 1 / Local:</label>
+                        <select id="select-team1" onchange="onTeamChanged()">
+                            <!-- Llenado dinámicamente con las 24 selecciones -->
+                        </select>
+                        <span id="rating-team1" class="rating-badge">★ 91</span>
+                    </div>
+
+                    <div class="vs-text">VS</div>
+
+                    <div class="team-select-box">
+                        <label for="select-team2">Jugador 2 / Rival:</label>
+                        <select id="select-team2" onchange="onTeamChanged()">
+                            <!-- Llenado dinámicamente con las 24 selecciones -->
+                        </select>
+                        <span id="rating-team2" class="rating-badge">★ 90</span>
+                    </div>
+                </div>
+
                 <div class="game-controls-bar">
                     <button class="btn btn-primary" onclick="playLocal()">👥 Jugar Local (2 Jugadores)</button>
-                    <button class="btn btn-online" onclick="playOnline()" id="btn-online">🌐 Jugar en Línea (Buscar Jugadores)</button>
+                    <button class="btn btn-online" onclick="playOnline()" id="btn-online">🌐 Jugar en Línea (Buscar Oponente)</button>
                     <button class="btn btn-secondary" onclick="playCpu()">🤖 1 Jugador vs CPU</button>
                 </div>
+
                 <div id="matchmaking-status" class="matchmaking-status">
-                    Selecciona una modalidad arriba para comenzar a jugar
+                    Selecciona tus países y pulsa una modalidad para jugar
                 </div>
             </div>
 
@@ -41,33 +64,32 @@
             <div class="canvas-wrapper">
                 <canvas id="game-canvas"></canvas>
             </div>
-            <div class="game-instructions">
-                💡 <strong>Instrucciones:</strong> Toca o haz clic sobre una ficha de tu equipo, arrastra hacia atrás para ajustar la potencia y suelta para tirar. ¡En el modo <strong>2 Jugadores Local</strong> pueden arrastrar al mismo tiempo!
-            </div>
-        </section>
 
-        <!-- INFORMACIÓN DE MODALIDADES Y WEBSOCKET -->
-        <section class="modes" id="modalidades">
-            <h3 class="section-title">Modalidades Disponibles</h3>
-            <div class="modes-grid">
-                <div class="mode-card">
-                    <div class="mode-header">
-                        <span class="mode-badge local">LOCAL</span>
-                        <h4>2 Jugadores (Misma Pantalla)</h4>
+            <!-- GUÍA DE PODERES Y CONTROLES -->
+            <div class="abilities-guide">
+                <div class="guide-item">
+                    <span class="guide-icon">🔥</span>
+                    <div>
+                        <strong>FUEGO:</strong> Pulsa el botón inferior para armar el tiro. Atraviesa todas las fichas con +50% de potencia y cámara lenta. Solo el arquero rival en su mitad puede bloquearlo.
                     </div>
-                    <p>
-                        Diseñado para computadoras, tablets y celulares táctiles. Cada persona controla su equipo en tiempo real sin turnos.
-                    </p>
                 </div>
-
-                <div class="mode-card">
-                    <div class="mode-header">
-                        <span class="mode-badge online">EN LÍNEA</span>
-                        <h4>Multijugador Vía WebSocket</h4>
+                <div class="guide-item">
+                    <span class="guide-icon">⏸</span>
+                    <div>
+                        <strong>PAUSA:</strong> Ralentiza todo el juego al 15% de velocidad durante 2 segundos para planificar tus disparos con total precisión.
                     </div>
-                    <p>
-                        Conéctate al instante con otro jugador en internet a través del túnel seguro <code>wss://llamoca.enlace.ink</code> con sincronización de tiros inmediata.
-                    </p>
+                </div>
+                <div class="guide-item">
+                    <span class="guide-icon">⚡</span>
+                    <div>
+                        <strong>CAMPO MAGNÉTICO:</strong> Escudo de 12 segundos para todo tu equipo. Repele a los rivales que intenten chocar contra tus fichas o el balón devolviéndoles el 60% de energía y electrocutándolos.
+                    </div>
+                </div>
+                <div class="guide-item">
+                    <span class="guide-icon">🧤</span>
+                    <div>
+                        <strong>ARQUERO MANUAL:</strong> Arrastra a tu arquero (dorsal 1); el juego irá al 50% de velocidad para que atajes tiros a quemarropa sin salir de tu área grande.
+                    </div>
                 </div>
             </div>
         </section>
@@ -97,27 +119,61 @@
 
     <script src="game.js"></script>
     <script>
+        // Llenar selectores con las 24 selecciones de TEAMS_DATABASE
+        const t1Select = document.getElementById('select-team1');
+        const t2Select = document.getElementById('select-team2');
+
+        const allTeams = Object.keys(TEAMS_DATABASE);
+        allTeams.forEach(team => {
+            const opt1 = document.createElement('option');
+            opt1.value = team;
+            opt1.textContent = `${team} (${TEAMS_DATABASE[team].rating}★)`;
+            if (team === "Argentina") opt1.selected = true;
+            t1Select.appendChild(opt1);
+
+            const opt2 = document.createElement('option');
+            opt2.value = team;
+            opt2.textContent = `${team} (${TEAMS_DATABASE[team].rating}★)`;
+            if (team === "Brasil") opt2.selected = true;
+            t2Select.appendChild(opt2);
+        });
+
+        function onTeamChanged() {
+            const team1 = t1Select.value;
+            const team2 = t2Select.value;
+            document.getElementById('rating-team1').textContent = `★ ${TEAMS_DATABASE[team1].rating}`;
+            document.getElementById('rating-team2').textContent = `★ ${TEAMS_DATABASE[team2].rating}`;
+            if (window.mundialitoGame && window.mundialitoGame.mode === 'match' && window.mundialitoGame.matchType !== 'online') {
+                window.mundialitoGame.teams = [team1, team2];
+            }
+        }
+
         function playLocal() {
             if (window.mundialitoGame) {
-                window.mundialitoGame.startLocalMatch("Argentina", "Brasil");
-                document.getElementById('matchmaking-status').innerHTML = "🟢 <strong>Modo Local Activo:</strong> ¡Ambos jugadores pueden disparar sus chapitas en la misma pantalla!";
+                const team1 = t1Select.value;
+                const team2 = t2Select.value;
+                window.mundialitoGame.startLocalMatch(team1, team2);
+                document.getElementById('matchmaking-status').innerHTML = `👥 <strong>Modo 2 Jugadores Local Activo:</strong> ${team1} vs ${team2}. ¡Ambos pueden tirar a la vez!`;
             }
         }
 
         function playCpu() {
             if (window.mundialitoGame) {
-                window.mundialitoGame.startCpuMatch("Argentina", "Alemania");
-                document.getElementById('matchmaking-status').innerHTML = "🤖 <strong>Modo vs CPU Activo:</strong> Juega con Argentina contra la IA de Alemania.";
+                const team1 = t1Select.value;
+                const team2 = t2Select.value;
+                window.mundialitoGame.startCpuMatch(team1, team2);
+                document.getElementById('matchmaking-status').innerHTML = `🤖 <strong>Modo vs CPU Activo:</strong> Controlas a ${team1} contra la IA de ${team2}.`;
             }
         }
 
         function playOnline() {
             if (window.mundialitoGame) {
+                const team1 = t1Select.value;
                 const btn = document.getElementById('btn-online');
                 btn.disabled = true;
                 btn.textContent = "🔍 Buscando...";
-                document.getElementById('matchmaking-status').innerHTML = "🔄 <strong>Conectando al WebSocket del VPS...</strong> Buscando rival en línea...";
-                window.mundialitoGame.searchOnlineMatch();
+                document.getElementById('matchmaking-status').innerHTML = `🔄 <strong>Conectando al WebSocket...</strong> Buscando rival para ${team1}...`;
+                window.mundialitoGame.searchOnlineMatch(team1);
 
                 const checkInterval = setInterval(() => {
                     const status = window.mundialitoGame.onlineStatus;
