@@ -193,7 +193,6 @@ jobs:
               py_compile.compile(file, doraise=True)
           print("Archivos Python validados correctamente.")
           PY
-
       - name: Generar especificacion PyInstaller con soporte completo de Kivy y ANGLE
         run: |
           python - << 'PY'
@@ -214,34 +213,37 @@ jobs:
               if f.endswith(('.mp3', '.ogg', '.wav', '.json')) and os.path.isfile(f):
                   datas.append((f, '.'))
 
+          # Fusionar dependencias de Kivy con las personalizadas para no duplicar 'hiddenimports'
+          kivy_deps = get_deps_minimal(video=False, camera=False)
+          hidden_imports = [
+              'sqlite3',
+              'json',
+              'math',
+              'random',
+              'PIL',
+              'kivy',
+              'kivy.core.audio.audio_sdl2',
+              'kivy.core.window.window_sdl2',
+              'kivy.core.image.img_sdl2',
+              'kivy.core.text.text_sdl2',
+          ] + kivy_deps.get('hiddenimports', [])
+          excluded_imports = ['tkinter'] + kivy_deps.get('excludes', [])
+
           a = Analysis(
               ['main.py'],
               pathex=['.'],
               binaries=[],
               datas=datas,
-              hiddenimports=[
-                  'sqlite3',
-                  'json',
-                  'math',
-                  'random',
-                  'PIL',
-                  'kivy',
-                  'kivy.core.audio.audio_sdl2',
-                  'kivy.core.window.window_sdl2',
-                  'kivy.core.image.img_sdl2',
-                  'kivy.core.text.text_sdl2',
-              ],
+              hiddenimports=hidden_imports,
               hookspath=hookspath(),
               runtime_hooks=runtime_hooks(),
-              excludes=['tkinter'],
+              excludes=excluded_imports,
               win_no_prefer_redirects=False,
               win_private_assemblies=False,
-              cipher=None,
-              noarchive=False,
-              **get_deps_minimal(video=False, camera=False)
+              noarchive=False
           )
 
-          pyz = PYZ(a.pure, a.zipped_data, cipher=None)
+          pyz = PYZ(a.pure, a.zipped_data)
 
           exe = EXE(
               pyz,
@@ -269,7 +271,7 @@ jobs:
           """
           with open('Mundialito.spec', 'w', encoding='utf-8') as f:
               f.write(spec_code)
-          print("Mundialito.spec generado exitosamente con soporte ANGLE.")
+          print("Mundialito.spec generado exitosamente sin argumentos duplicados.")
           PY
 
       - name: Compilar ejecutable (modo automatico sin confirmaciones)
