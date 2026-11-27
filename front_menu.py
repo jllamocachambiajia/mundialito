@@ -279,12 +279,27 @@ class FrontMenu:
             self.cv.create_oval(px-r*.15,py-r*.15,px+r*.15,py+r*.15,fill='#172a20',width=0)
         bh=min(66,max(46,h*.072));bw=min(w*.8,420)
         shop_h=min(52,max(42,h*.055))
-        self.front_button(w/2,h*.66,bw,shop_h,'TIENDA',self.open_shop,'#e6c98e')
-        self.front_button(w/2,h*.76,bw,bh,'TORNEO MUNDIAL',lambda:self.front_navigate('tournament'))
-        self.front_button(w/2,h*.76+bh*1.3,bw,bh,'AMISTOSOS',lambda:self.front_navigate('friends'),'#ff7939')
+        self.front_button(w/2,h*.605,bw,shop_h,'TIENDA',self.open_shop,'#e6c98e')
+        self.front_button(w/2,h*.69,bw,bh,'TORNEO MUNDIAL',lambda:self.front_navigate('tournament'))
+        self.front_button(w/2,h*.69+bh*1.25,bw,bh,'AMISTOSOS',lambda:self.front_navigate('friends'),'#ff7939')
+        self.front_button(w/2,h*.69+bh*2.5,bw,bh,'EN LÍNEA',self.open_online,'#b5f65a')
         if getattr(self,'shop',None):
             self._coin(w-27,24,13)
             self.cv.create_text(w-47,24,text=str(self.shop.balance),fill='#ffd45c',font=self.front_font(20,True),anchor='e')
+
+    def open_online(self):
+        """Modo multijugador: pantalla aparte; no toca el motor offline."""
+        if getattr(self,'online_screen',None) is not None:
+            return
+        try:
+            from online_view import open_online
+        except Exception as exc:  # falta websocket-client u otro módulo: el juego offline sigue
+            self.front_error=f'En línea no disponible: {exc}'
+            return
+        def back():
+            self.online_screen=None
+            self.render()
+        self.online_screen=open_online(on_exit=back,data_dir=App.get_running_app().user_data_dir)
 
     def draw_loading(self):
         w,h=self.cw,self.ch;t=max(0,time.monotonic()-self.nav.shown_at)
