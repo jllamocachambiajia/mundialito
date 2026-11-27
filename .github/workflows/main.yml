@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   # =========================================================================
-  # TRABAJO 1: APK PARA ANDROID (Ubuntu 22.04) - Conservado intacto
+  # TRABAJO 1: APK PARA ANDROID (Ubuntu 22.04)
   # =========================================================================
   apk:
     name: Compilar APK Android
@@ -58,26 +58,25 @@ jobs:
           python -m pip install "buildozer==1.6.0" "Cython==0.29.33" \
             "setuptools==69.5.1" "wheel==0.43.0"
 
-      - name: Validar estructura del proyecto PNG
+      - name: Validar estructura del proyecto
         run: |
           python - <<'PY'
           import configparser
           import pathlib
           import py_compile
           root = pathlib.Path('.')
-          required = ('main.py', 'tournament.py', 'presentation.py', 'buildozer.spec',
-                      'assets/images/brazos_ganador.png', 'assets/images/copa.png',
-                      'assets/animations/gol.gif')
+          required = ('main.py', 'buildozer.spec')
           missing = [name for name in required if not (root / name).is_file()]
           if missing:
-              raise SystemExit('Faltan archivos en la raiz del repositorio: ' + ', '.join(missing))
+              raise SystemExit('Faltan archivos basicos en la raiz: ' + ', '.join(missing))
           config = configparser.ConfigParser(interpolation=None)
           config.read('buildozer.spec', encoding='utf-8')
           if config['app'].get('source.dir', '.').strip() != '.':
               raise SystemExit('Esta configuracion requiere source.dir = .')
-          for name in ('main.py', 'tournament.py', 'presentation.py'):
-              py_compile.compile(name, doraise=True)
-          print('Estructura PNG y sintaxis Python comprobadas.')
+          for name in ('main.py', 'tournament.py', 'presentation.py', 'network_client.py', 'online_view.py'):
+              if (root / name).is_file():
+                  py_compile.compile(name, doraise=True)
+          print('Estructura y sintaxis Python validadas correctamente.')
           PY
 
       - name: Instalar SDK y NDK compatibles en carpeta aislada
@@ -104,7 +103,7 @@ jobs:
           test -x "$SDK/build-tools/$ANDROID_BUILD_TOOLS/aidl"
           test -f "$SDK/ndk/$ANDROID_NDK_VERSION/source.properties"
 
-      - name: Ajustar solo herramientas Android para esta compilacion
+      - name: Ajustar herramientas Android y permisos de red para multijugador
         run: |
           python - <<'PY'
           import configparser
@@ -121,11 +120,28 @@ jobs:
           app['android.skip_update'] = 'True'
           app['android.accept_sdk_license'] = 'True'
           app['p4a.branch'] = 'v2024.01.21'
+          
+          # Extensiones a incluir
           extensions = [part.strip() for part in app.get('source.include_exts', '').split(',') if part.strip()]
           for extension in ('png', 'gif', 'json', 'mp3', 'wav', 'ogg', 'py', 'ttf'):
               if extension not in extensions:
                   extensions.append(extension)
           app['source.include_exts'] = ','.join(extensions)
+
+          # Asegurar permisos de red e internet
+          perms = [p.strip() for p in app.get('android.permissions', '').split(',') if p.strip()]
+          for p in ('INTERNET', 'ACCESS_NETWORK_STATE'):
+              if p not in perms:
+                  perms.append(p)
+          app['android.permissions'] = ','.join(perms)
+          app['android.manifest.application_arguments'] = 'android:usesCleartextTraffic="true"'
+
+          # Asegurar dependencias de red
+          reqs = [r.strip() for r in app.get('requirements', '').split(',') if r.strip()]
+          if 'websocket-client' not in reqs:
+              reqs.append('websocket-client')
+          app['requirements'] = ','.join(reqs)
+
           with open('buildozer.spec', 'w', encoding='utf-8') as stream:
               config.write(stream)
           PY
@@ -155,6 +171,7 @@ jobs:
             buildozer.spec
           if-no-files-found: warn
           retention-days: 7
+
   # =========================================================================
   # TRABAJO 2: EJECUTABLE .EXE PARA WINDOWS (Con soporte ANGLE / DirectX)
   # =========================================================================
@@ -166,7 +183,6 @@ jobs:
       run:
         shell: bash
     env:
-      # Fuerza a Kivy a usar DirectX mediante ANGLE, evitando el error de OpenGL 1.1
       KIVY_GL_BACKEND: "angle_sdl2"
 
     steps:
@@ -179,10 +195,10 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Instalar dependencias precompiladas de Windows (incluyendo ANGLE)
+      - name: Instalar dependencias precompiladas de Windows (incluyendo ANGLE y red)
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          python -m pip install "kivy[base]" kivy_deps.sdl2 kivy_deps.glew kivy_deps.angle pillow pyinstaller
+          python -m pip install "kivy[base]" kivy_deps.sdl2 kivy_deps.glew kivy_deps.angle pillow pyinstaller websocket-client requests
 
       - name: Validar sintaxis de archivos Python
         run: |
@@ -193,11 +209,11 @@ jobs:
               py_compile.compile(file, doraise=True)
           print("Archivos Python validados correctamente.")
           PY
-      - name: Generar especificacion PyInstaller con soporte completo de Kivy y ANGLE
+
+      - name: Generar especificacion PyInstaller con soporte completo de Kivy, ANGLE y Red
         run: |
           python - << 'PY'
           import os
-
           spec_code = """# -*- mode: python ; coding: utf-8 -*-
           import os
           from PyInstaller.building.build_main import Analysis, PYZ, EXE, COLLECT
@@ -213,7 +229,6 @@ jobs:
               if f.endswith(('.mp3', '.ogg', '.wav', '.json')) and os.path.isfile(f):
                   datas.append((f, '.'))
 
-          # Fusionar dependencias de Kivy con las personalizadas para no duplicar 'hiddenimports'
           kivy_deps = get_deps_minimal(video=False, camera=False)
           hidden_imports = [
               'sqlite3',
@@ -226,6 +241,11 @@ jobs:
               'kivy.core.window.window_sdl2',
               'kivy.core.image.img_sdl2',
               'kivy.core.text.text_sdl2',
+              'websocket',
+              'urllib',
+              'urllib.request',
+              'urllib.error',
+              'urllib.parse',
           ] + kivy_deps.get('hiddenimports', [])
           excluded_imports = ['tkinter'] + kivy_deps.get('excludes', [])
 
@@ -271,7 +291,7 @@ jobs:
           """
           with open('Mundialito.spec', 'w', encoding='utf-8') as f:
               f.write(spec_code)
-          print("Mundialito.spec generado exitosamente sin argumentos duplicados.")
+          print("Mundialito.spec generado exitosamente.")
           PY
 
       - name: Compilar ejecutable (modo automatico sin confirmaciones)
@@ -289,3 +309,4 @@ jobs:
           path: dist/Mundialito-Windows.zip
           if-no-files-found: error
           retention-days: 14
+          
