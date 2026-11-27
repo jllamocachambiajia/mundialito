@@ -1,0 +1,12 @@
+services:
+  mundialito:
+    build: .
+    container_name: mundialito_server
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - mundialito_data:/data
+    mem_limit: 400m
+volumes:
+  mundialito_data:
