@@ -255,6 +255,9 @@ class Match:
                 "pausa": self.pausa["owner"] if self.pausa_active() else None,
                 "magnet": [self.mag_active(0), self.mag_active(1)],
                 "stun": [t < self.stun[0], t < self.stun[1]],
+                # v2: solo información para dibujar (no cambia la física)
+                "fire_body": self.fire["shot"]["body"] if self.fire["shot"] else None,
+                "pausa_left": max(0, r(self.pausa["until"] - t)) if self.pausa_active() else 0,
             },
         }
 
